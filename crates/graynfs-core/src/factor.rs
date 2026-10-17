@@ -162,7 +162,6 @@ struct GnfsStats {
     polynomial: PolynomialPair,
     relations: usize,
     rank: usize,
-    pilot_relations_per_ms: Option<f64>,
 }
 
 pub fn factor(n: &Integer, options: &FactorOptions) -> Result<FactorReport, FactorError> {
@@ -803,13 +802,6 @@ where
                 outcome.record("gnfs");
                 *relation_count += stats.relations;
                 *rank += stats.rank;
-                if let Some(rate) = stats.pilot_relations_per_ms
-                    && signals
-                        .pilot_relations_per_ms
-                        .is_none_or(|best| rate > best)
-                {
-                    signals.pilot_relations_per_ms = Some(rate);
-                }
                 let polynomial_root = stats.polynomial.m.to_string();
                 if polynomial.is_none() {
                     *polynomial = Some(stats.polynomial);
@@ -1016,8 +1008,7 @@ where
     let mut attempt = options.clone();
     attempt.degree = Some(degree);
     resolve_scaled_bounds(n, degree, &mut attempt);
-    let started = Instant::now();
-    let outcome = if degree == 2 {
+    if degree == 2 {
         quadratic_divisor(n, &attempt, cancelled, deadline, progress, timings, pilot)
     } else {
         match general::gnfs_divisor(n, &attempt, cancelled, deadline) {
@@ -1032,7 +1023,6 @@ where
                             polynomial,
                             relations,
                             rank,
-                            pilot_relations_per_ms: None,
                         },
                     )),
                     Err(error) => Err(error),
@@ -1040,16 +1030,6 @@ where
             }
             Err(error) => Err(error),
         }
-    };
-    match outcome {
-        Ok((divisor, mut stats)) => {
-            if pilot {
-                let elapsed_ms = started.elapsed().as_millis().max(1) as f64;
-                stats.pilot_relations_per_ms = Some(stats.relations as f64 / elapsed_ms);
-            }
-            Ok((divisor, stats))
-        }
-        Err(error) => Err(error),
     }
 }
 
@@ -1266,7 +1246,6 @@ where
                         polynomial: outcome.display,
                         relations: outcome.relations,
                         rank: outcome.rank,
-                        pilot_relations_per_ms: None,
                     },
                 ));
             }
@@ -1404,7 +1383,6 @@ where
                         polynomial,
                         relations: relations.len(),
                         rank,
-                        pilot_relations_per_ms: None,
                     },
                 ));
             }
