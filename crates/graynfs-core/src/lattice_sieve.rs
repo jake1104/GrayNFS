@@ -1,4 +1,5 @@
 use num_traits::Zero;
+use std::sync::atomic::AtomicBool;
 use std::time::Instant;
 
 use crate::hensel::budget_expired;
@@ -33,13 +34,14 @@ pub fn reduce_basis(
     mut second: (i64, i64),
     coefficient: i128,
     deadline: Option<Instant>,
+    stop: Option<&AtomicBool>,
 ) -> LatticeBasis {
     if coefficient <= 0 {
         return LatticeBasis { first, second };
     }
     let iterations = 256;
     for _ in 0..iterations {
-        if budget_expired(deadline) {
+        if budget_expired(deadline, stop) {
             break;
         }
         let wide_first = (i128::from(first.0), i128::from(first.1));
@@ -89,10 +91,17 @@ pub fn lattice_for_prime(
     root: u64,
     coefficient: i128,
     deadline: Option<Instant>,
+    stop: Option<&AtomicBool>,
 ) -> LatticeBasis {
     let prime_value = i64::try_from(prime).unwrap_or(i64::MAX);
     let root_value = i64::try_from(root).unwrap_or(0);
-    reduce_basis((prime_value, 0), (root_value, 1), coefficient, deadline)
+    reduce_basis(
+        (prime_value, 0),
+        (root_value, 1),
+        coefficient,
+        deadline,
+        stop,
+    )
 }
 
 pub fn lattice_size(basis: &LatticeBasis, coefficient: i128, prime: u64) -> (usize, usize) {

@@ -29,6 +29,11 @@ struct Cli {
     large_prime_bound: usize,
     #[arg(long, default_value_t = 60)]
     timeout_seconds: u64,
+    #[arg(
+        long,
+        help = "Cap estimated sieve and matrix memory in MiB before allocating (default 1024)"
+    )]
+    max_memory_mb: Option<usize>,
     #[arg(long)]
     no_fallback: bool,
     #[arg(long)]
@@ -66,6 +71,31 @@ struct Cli {
     json: bool,
 }
 
+fn options_from_cli(cli: &Cli) -> FactorOptions {
+    FactorOptions {
+        degree: cli.degree,
+        rational_base_bound: cli.rational_base_bound,
+        algebraic_base_bound: cli.algebraic_base_bound,
+        sieve_a_bound: cli.sieve_a_bound,
+        sieve_b_bound: cli.sieve_b_bound,
+        large_prime_bound: cli.large_prime_bound,
+        max_duration: Some(std::time::Duration::from_secs(cli.timeout_seconds)),
+        max_memory_mb: cli.max_memory_mb,
+        allow_fallback: !cli.no_fallback,
+        skip_preprocessing: cli.skip_preprocessing,
+        enable_double_large_primes: cli.double_large_primes,
+        use_fermat: !cli.no_fermat,
+        use_squfof: !cli.no_squfof,
+        use_pm1: !cli.no_pm1,
+        use_pp1: !cli.no_pp1,
+        use_ecm: !cli.no_ecm,
+        use_mpqs: !cli.no_mpqs,
+        threads: cli.threads,
+        perf_mode: cli.perf_mode,
+        ..FactorOptions::default()
+    }
+}
+
 fn main() -> ExitCode {
     let cli = Cli::parse();
     let number = match parse_decimal(&cli.number) {
@@ -79,27 +109,7 @@ fn main() -> ExitCode {
             return ExitCode::FAILURE;
         }
     };
-    let options = FactorOptions {
-        degree: cli.degree,
-        rational_base_bound: cli.rational_base_bound,
-        algebraic_base_bound: cli.algebraic_base_bound,
-        sieve_a_bound: cli.sieve_a_bound,
-        sieve_b_bound: cli.sieve_b_bound,
-        large_prime_bound: cli.large_prime_bound,
-        max_duration: Some(std::time::Duration::from_secs(cli.timeout_seconds)),
-        allow_fallback: !cli.no_fallback,
-        skip_preprocessing: cli.skip_preprocessing,
-        enable_double_large_primes: cli.double_large_primes,
-        use_fermat: !cli.no_fermat,
-        use_squfof: !cli.no_squfof,
-        use_pm1: !cli.no_pm1,
-        use_pp1: !cli.no_pp1,
-        use_ecm: !cli.no_ecm,
-        use_mpqs: !cli.no_mpqs,
-        threads: cli.threads,
-        perf_mode: cli.perf_mode,
-        ..FactorOptions::default()
-    };
+    let options = options_from_cli(&cli);
     let (result, timings) = factor_with_timings(&number, &options, |_| Ok(()));
     match result {
         Ok(report) => {
@@ -272,5 +282,85 @@ mod tests {
         let value = json_error_value(&FactorError::ResourceLimit("deadline".to_string()));
         assert_eq!(value["error"]["category"], "resource-limit");
         assert_eq!(value["error"]["detail"], "deadline");
+    }
+
+    #[test]
+    fn error_parts_maps_input() {
+        let (category, detail) = error_parts(&FactorError::InvalidInput("bad digit".to_string()));
+        assert_eq!(category, "input");
+        assert_eq!(detail, "bad digit");
+    }
+
+    #[test]
+    fn error_parts_maps_resource_limit() {
+        let (category, detail) = error_parts(&FactorError::ResourceLimit("deadline".to_string()));
+        assert_eq!(category, "resource-limit");
+        assert_eq!(detail, "deadline");
+    }
+
+    #[test]
+    fn error_parts_maps_cancelled() {
+        let (category, detail) = error_parts(&FactorError::Cancelled);
+        assert_eq!(category, "cancelled");
+        assert!(!detail.is_empty());
+    }
+
+    #[test]
+    fn error_parts_maps_internal_variants() {
+        let variants = [
+            FactorError::NoPolynomial,
+            FactorError::SearchExhausted,
+            FactorError::InsufficientRelations {
+                found: 1,
+                required: 2,
+            },
+            FactorError::AlgebraicSquareRootFailed,
+            FactorError::LinearAlgebra("rank".to_string()),
+            FactorError::Factorization("boom".to_string()),
+            FactorError::UnsupportedDegree(3),
+        ];
+        for error in &variants {
+            let (category, detail) = error_parts(error);
+            assert_eq!(category, "internal");
+            assert!(!detail.is_empty());
+        }
+    }
+
+    #[test]
+    fn json_error_shape_has_category_and_detail_for_each_category() {
+        let cases = [
+            (FactorError::InvalidInput("bad digit".to_string()), "input"),
+            (
+                FactorError::ResourceLimit("deadline".to_string()),
+                "resource-limit",
+            ),
+            (FactorError::Cancelled, "cancelled"),
+            (FactorError::NoPolynomial, "internal"),
+        ];
+        for (error, category) in &cases {
+            let value = json_error_value(error);
+            assert_eq!(value["error"]["category"], *category);
+            assert!(value["error"]["detail"].is_string());
+            assert!(value.get("input").is_none());
+        }
+    }
+
+    #[test]
+    fn exit_codes_pin_success_zero_and_failure_nonzero() {
+        assert_eq!(ExitCode::SUCCESS, ExitCode::from(0));
+        assert_ne!(ExitCode::FAILURE, ExitCode::from(0));
+    }
+
+    #[test]
+    fn cli_parses_max_memory_mb() {
+        let cli = Cli::try_parse_from(["graynfs", "100160063", "--max-memory-mb", "512"])
+            .expect("parse with memory cap");
+        assert_eq!(cli.max_memory_mb, Some(512));
+        let options = options_from_cli(&cli);
+        assert_eq!(options.max_memory_mb, Some(512));
+        let bare = Cli::try_parse_from(["graynfs", "100160063"]).expect("parse without memory cap");
+        assert_eq!(bare.max_memory_mb, None);
+        let bare_options = options_from_cli(&bare);
+        assert_eq!(bare_options.max_memory_mb, None);
     }
 }

@@ -152,7 +152,6 @@ fn number_field_homogeneous_matches_evaluation() {
 
 #[test]
 fn lift_budget_keeps_soundness() {
-    graynfs_core::hensel::clear_solver_abort();
     let n = parse_decimal("1155285037654380637").expect("valid number");
     let options = FactorOptions {
         degree: Some(3),
@@ -180,6 +179,54 @@ fn lift_budget_keeps_soundness() {
         wall_ms < bound_ms,
         "dep0 tail must be capped, wall={wall_ms}ms"
     );
+}
+
+#[test]
+fn concurrent_factor_calls_keep_independent_cancellation() {
+    use std::sync::Barrier;
+    let barrier = Barrier::new(3);
+    std::thread::scope(|scope| {
+        let barrier = &barrier;
+        let first = scope.spawn(move || {
+            barrier.wait();
+            let n = parse_decimal("1155285037654380637").expect("valid number");
+            let options = FactorOptions {
+                degree: Some(3),
+                skip_preprocessing: true,
+                threads: Some(2),
+                ..FactorOptions::default()
+            };
+            factor(&n, &options).expect("first concurrent factorization succeeds")
+        });
+        let second = scope.spawn(move || {
+            barrier.wait();
+            let n = parse_decimal("11783510925019").expect("valid number");
+            let options = FactorOptions {
+                degree: Some(3),
+                skip_preprocessing: true,
+                threads: Some(2),
+                ..FactorOptions::default()
+            };
+            factor(&n, &options).expect("second concurrent factorization succeeds")
+        });
+        barrier.wait();
+        let first = first.join().expect("first thread joins");
+        let second = second.join().expect("second thread joins");
+        assert_eq!(
+            first.factors,
+            vec!["1074741869".to_string(), "1074941873".to_string()]
+        );
+        let product: Integer = second
+            .factors
+            .iter()
+            .map(|value| parse_decimal(value).expect("valid factor"))
+            .fold(Integer::from(1), |accumulator, value| accumulator * value);
+        assert_eq!(
+            product,
+            parse_decimal("11783510925019").expect("valid number")
+        );
+        assert_eq!(second.factors.len(), 2);
+    });
 }
 
 use num_traits::Zero;

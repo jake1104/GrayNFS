@@ -147,13 +147,105 @@ impl NumberField {
     }
 
     pub fn discriminant(&self) -> Integer {
-        let degree = Integer::from(self.degree);
-        let constant = self.polynomial[0].clone();
-        let mut discriminant = degree.pow(self.degree as u32);
-        discriminant *= constant.pow((self.degree - 1) as u32);
-        if self.degree % 2 == 1 {
-            discriminant = -discriminant;
+        polynomial_discriminant(&self.polynomial)
+    }
+}
+
+pub fn polynomial_discriminant(coefficients: &[Integer]) -> Integer {
+    let degree = coefficients.len() - 1;
+    if degree < 2 {
+        return Integer::from(1);
+    }
+    let mut derivative = vec![Integer::from(0); degree];
+    for index in 1..=degree {
+        derivative[index - 1] = &coefficients[index] * Integer::from(index);
+    }
+    let size = degree + degree - 1;
+    let mut matrix = vec![vec![Integer::from(0); size]; size];
+    for row in 0..degree - 1 {
+        for offset in 0..=degree {
+            matrix[row][row + offset] = coefficients[degree - offset].clone();
         }
-        discriminant
+    }
+    for row in 0..degree {
+        for offset in 0..degree {
+            matrix[degree - 1 + row][row + offset] = derivative[degree - 1 - offset].clone();
+        }
+    }
+    let mut previous = Integer::from(1);
+    let mut sign = 1_i64;
+    for step in 0..size - 1 {
+        if matrix[step][step].is_zero() {
+            let mut swapped = false;
+            for row in step + 1..size {
+                if !matrix[row][step].is_zero() {
+                    matrix.swap(step, row);
+                    sign = -sign;
+                    swapped = true;
+                    break;
+                }
+            }
+            if !swapped {
+                return Integer::from(0);
+            }
+        }
+        let pivot = matrix[step][step].clone();
+        for row in step + 1..size {
+            for column in step + 1..size {
+                let updated =
+                    &matrix[row][column] * &pivot - &matrix[row][step] * &matrix[step][column];
+                matrix[row][column] = updated / &previous;
+            }
+            matrix[row][step] = Integer::from(0);
+        }
+        previous = pivot;
+    }
+    let resultant = matrix[size - 1][size - 1].clone() * Integer::from(sign);
+    if (degree * (degree - 1) / 2).is_multiple_of(2) {
+        resultant
+    } else {
+        -resultant
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn discriminant_matches_quadratic_known_value() {
+        let field = NumberField::new(
+            2,
+            vec![Integer::from(1), Integer::from(0), Integer::from(1)],
+        )
+        .expect("quadratic field");
+        assert_eq!(field.discriminant(), Integer::from(-4));
+    }
+
+    #[test]
+    fn discriminant_matches_cubic_known_value() {
+        let field = NumberField::new(
+            3,
+            vec![
+                Integer::from(1),
+                Integer::from(1),
+                Integer::from(0),
+                Integer::from(1),
+            ],
+        )
+        .expect("cubic field");
+        assert_eq!(field.discriminant(), Integer::from(-31));
+    }
+
+    #[test]
+    fn discriminant_agrees_with_shared_helper() {
+        let coefficients = vec![
+            Integer::from(-2),
+            Integer::from(0),
+            Integer::from(0),
+            Integer::from(1),
+        ];
+        let field = NumberField::new(3, coefficients.clone()).expect("cubic field");
+        assert_eq!(field.discriminant(), polynomial_discriminant(&coefficients));
     }
 }

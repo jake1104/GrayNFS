@@ -1,4 +1,5 @@
 use num_traits::{Euclid, ToPrimitive, Zero};
+use std::sync::atomic::AtomicBool;
 use std::time::Instant;
 
 use crate::hensel::budget_expired;
@@ -62,6 +63,7 @@ pub fn find_square_root(
     field: &NumberField,
     value: &Element,
     deadline: Option<Instant>,
+    stop: Option<&AtomicBool>,
 ) -> Option<Element> {
     if value.coefficients.len() != 3 {
         return None;
@@ -74,10 +76,12 @@ pub fn find_square_root(
         .map(|coefficient| coefficient.bits())
         .max()
         .unwrap_or(0);
-    if let Some(root) = hensel_cubic_root(&form, alpha, (alpha_bits / 2 + 32) as usize, deadline) {
+    if let Some(root) =
+        hensel_cubic_root(&form, alpha, (alpha_bits / 2 + 32) as usize, deadline, stop)
+    {
         return Some(root);
     }
-    hensel_cubic_root(&form, alpha, (alpha_bits + 16) as usize, deadline)
+    hensel_cubic_root(&form, alpha, (alpha_bits + 16) as usize, deadline, stop)
 }
 
 fn hensel_cubic_root(
@@ -85,16 +89,17 @@ fn hensel_cubic_root(
     alpha: &[Integer],
     bound_bits: usize,
     deadline: Option<Instant>,
+    stop: Option<&AtomicBool>,
 ) -> Option<Element> {
     for &prime in CUBIC_SOLVER_PRIMES.iter() {
-        if budget_expired(deadline) {
+        if budget_expired(deadline, stop) {
             return None;
         }
         let mut modulus = Integer::from(prime);
         while modulus.bits() <= bound_bits as u64 {
             modulus *= prime;
         }
-        if let Some(root) = hensel_for_prime(form, alpha, prime, &modulus, deadline) {
+        if let Some(root) = hensel_for_prime(form, alpha, prime, &modulus, deadline, stop) {
             return Some(root);
         }
     }
@@ -107,6 +112,7 @@ fn hensel_for_prime(
     prime: u64,
     modulus: &Integer,
     deadline: Option<Instant>,
+    stop: Option<&AtomicBool>,
 ) -> Option<Element> {
     let p = prime as i128;
     let coefficients = form.to_mod(prime);
@@ -117,7 +123,7 @@ fn hensel_for_prime(
     ];
     let current = Integer::from(prime);
     for z in 0..p {
-        if budget_expired(deadline) {
+        if budget_expired(deadline, stop) {
             return None;
         }
         for x in 0..p {
@@ -549,7 +555,7 @@ mod tests {
 
     fn assert_root(field: &NumberField, beta: &Element) {
         let alpha = field.multiply(beta, beta);
-        let root = find_square_root(field, &alpha, None).expect("cubic square root");
+        let root = find_square_root(field, &alpha, None, None).expect("cubic square root");
         assert_eq!(field.multiply(&root, &root), alpha);
     }
 

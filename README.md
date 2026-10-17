@@ -1,6 +1,6 @@
 # GrayNFS
 
-![Version](https://img.shields.io/badge/version-v0.1.0-blue.svg)
+![Version](https://img.shields.io/badge/version-v0.1.1-blue.svg)
 ![License: MIT](https://img.shields.io/badge/license-MIT-blue.svg)
 
 Integer factorization in Rust, with a command-line interface and a
@@ -28,6 +28,28 @@ allocator path into it).
 - [Building](#building)
 - [License](#license)
 
+## Release notes (v0.1.1 — 2026-10-17)
+
+0.x carries no compatibility promise.
+
+Breaking changes (all three previously silent, now explicit):
+- `FactorReport.method` strings report the stage that actually won
+  (e.g. `fermat`, `pm1`); the old `preprocessing` label is gone.
+- Python `ValueError` messages are now `"category: detail"` prefixed
+  (e.g. `resource-limit: ...`), matching the CLI `error: <category>:
+  <detail>` shape.
+- Previously silently accepted inputs are now hard errors:
+  `use_squfof=false`, out-of-range `degree`, and a degree-race fraction
+  below `0.05`.
+
+Headline improvements since v0.1.0: memory-budget API (`memory_budget_bytes` /
+`--max-memory-mb` / `max_memory_mb` with clean `ResourceLimit` failures),
+single thread-budget propagation through every parallel stage, stabilized
+4-way error taxonomy (`input` / `resource-limit` / `cancelled` / `internal`)
+across core, CLI, JSON and Python, local gate script (`gate.ps1`), and the
+quarantine policy for the debug-slow 105-bit boundary test (release-only
+`--ignored` gate).
+
 ## Release notes (v0.1.0 — 2026-10-17)
 
 First release. Integer factorization through an adaptive cascade (trial
@@ -37,9 +59,11 @@ Python binding. Pure-Rust arithmetic, default allocator mimalloc, MIT
 licensed. Install from [Installation](#installation).
 
 Measured (i5-1340P, 16 threads — details in [Benchmarks](#benchmarks):
-100-bit SIQS ~180-240 ms; 267-bit ECM case ~533 ms (same input: YAFU 3.1.9
-~836 ms); 82-bit default route ~12 ms; 105-bit hostile semiprime ~2.2 s;
-tight 1 s budget on the 267-bit case won 5/5. Every reported factorization
+100-bit SIQS 208-233 ms, median 229 (of 3); 267-bit ECM case 663-1024 ms,
+median 859 (of 3) (same input: YAFU 3.1.9 historical ~836 ms median of 5,
+archived 2026-10-17 runs); 82-bit default route ~12 ms; 105-bit hostile
+semiprime ~2.2 s;
+tight 1 s budget on the 267-bit case won 5/5 on the earlier tree (historical; 3/5 on the 2026-10-17 re-verification, see Benchmarks). Every reported factorization
 is product-verified before it is returned.
 
 Known limits: hostile inputs past ~105 balanced bits and all tested 90-digit
@@ -56,7 +80,7 @@ later, and maturin for the wheel.
 cargo build -p graynfs-cli --release
 .\target\release\graynfs.exe 1000036000099
 python -m maturin build --release --out dist
-python -m pip install --force-reinstall --no-deps dist\graynfs-0.1.0-cp38-abi3-win_amd64.whl
+python -m pip install --force-reinstall --no-deps dist\graynfs-0.1.1-cp38-abi3-win_amd64.whl
 ```
 
 ## Quick start
@@ -64,23 +88,23 @@ python -m pip install --force-reinstall --no-deps dist\graynfs-0.1.0-cp38-abi3-w
 ```text
 > graynfs.exe 100160063
 N: 100160063
-method: preprocessing
+method: fermat
 degree: n/a
 factors: 10007 * 10009
 relations: 0
 rank: 0
-elapsed_ms: 0
+elapsed_ms: 2
 ```
 
 ```text
 > graynfs.exe 100160063 --timings
 N: 100160063
-method: preprocessing
+method: fermat
 degree: n/a
 factors: 10007 * 10009
 relations: 0
 rank: 0
-elapsed_ms: 0
+elapsed_ms: 1
 stage: fermat               degree: n/a  elapsed_ms: 0        divisor=10007
 ```
 
@@ -147,6 +171,7 @@ flowchart TD
 | `--sieve-b-bound` | 120 | sieve bound on `b` |
 | `--large-prime-bound` | 50000 | upper bound of a residual large prime |
 | `--timeout-seconds` | 60 | overall budget; on expiry the run ends with a clean `ResourceLimit` and a non-zero exit |
+| `--max-memory-mb` | unset (1 GiB budget) | cap estimated sieve and matrix memory in MiB before allocating; exceeded estimates fail cleanly with `ResourceLimit` instead of allocating |
 | `--no-fallback` | off | disable the Pollard-Rho fallback |
 | `--skip-preprocessing` | off | skip trial division and the Fermat/p-1/p+1/ECM probes; the perfect-square and perfect-power reductions still run |
 | `--double-large-primes` | off | keep relations carrying two or three large primes and pair them cyclically; raises the yield on very large inputs but slows collection at smaller ones |
@@ -189,7 +214,7 @@ objects only when `--timings` is also passed. A failed run instead emits
 Verified output:
 
 ```json
-{"degree":null,"elapsed_ms":0,"factors":["10007","10009"],"input":"100160063","method":"preprocessing","rank":0,"relations":0}
+{"degree":null,"elapsed_ms":1,"factors":["10007","10009"],"input":"100160063","method":"fermat","rank":0,"relations":0}
 ```
 
 ### Degree selection
@@ -234,17 +259,18 @@ import graynfs
 graynfs.factor(100160063)                       # [10007, 10009]
 graynfs.factor(100160063, degree=3)             # [10007, 10009]
 graynfs.is_probable_prime(10007)                # True
-graynfs.version()                               # '0.1.0'
+graynfs.version()                               # '0.1.1'
 graynfs.stage_timings(100160063, degree=3)      # [{'stage': 'fermat', ...}]
 ```
 
-All three outputs above were verified live against the installed 0.1.0 wheel.
+All three outputs above were verified live against the installed 0.1.1 wheel.
 `graynfs.factor` and `graynfs.factor_with_progress` accept `degree: int | None
 = None`, where `None` selects the degree automatically, plus
 `rational_base_bound`, `algebraic_base_bound`, `sieve_a_bound`,
 `sieve_b_bound`, `timeout_seconds` (`None` = no deadline, the default),
-`allow_fallback`, and the cascade toggles `use_fermat`, `use_squfof`,
-`use_pm1`, `use_pp1`, `use_ecm` and `use_mpqs` (all default `True`). All of
+`max_memory_mb` (`None` = 1 GiB budget, the default), `allow_fallback`, and
+the cascade toggles `use_fermat`, `use_squfof`, `use_pm1`, `use_pp1`,
+`use_ecm` and `use_mpqs` (all default `True`). All of
 these are keyword-only after `n`. The `threads: int | None = None` argument
 selects the worker-thread count (default: all logical cores), and `perf_mode:
 bool = False` marks timing records as performance-mode runs without changing
@@ -280,7 +306,10 @@ Method first: default release build (mimalloc default-on), 16 threads,
 i5-1340P, measured 2026-10-17 unless noted. Single runs are labeled as such;
 medians are of 5 runs. Sub-second deltas under ~30 ms and multi-second deltas
 under ~10% are noise on this machine. A single benchmark is never enough; the
-method tag on every row tells how far to trust it.
+method tag on every row tells how far to trust it. Every bench JSON kept on
+disk is an archive envelope carrying its own provenance (task ID, tier,
+timeout, threads, seeds, timestamp); filenames use the ID form
+`logs/<task-id>/<task-id>-bench-<tier>.json`.
 
 Degree 2 is SIQS (self-initializing polynomials over the QS
 sieve infra: target `A ≈ 2^(n_bits/2 + 1 - interval_bits)`, CRT-built `B`
@@ -301,7 +330,7 @@ the default LP bound, with explicit flags still winning.
 | `1155285037654380637 = 1074741869 * 1074941873` | `--skip-preprocessing --degree 3` | 3682 | 2422 | 1702 ms total, collect 1133 ms, rank 56 ms (single; square-root tails vary run to run, totals never compared) |
 | `100160063 = 10007 * 10009` | `--skip-preprocessing --degree 4` | 934 | 549 | 225 ms (single) |
 | `4606404410723 = 2048581 * 2248583` | `--skip-preprocessing --degree 5` + bounds below | 4265 | 2810 | 8224 ms total, collect 519 ms, rank 64 ms (single; totals are square-root-luck dominated) |
-| `770817968652704265841785071059` | `--skip-preprocessing --degree 2` | 1878 | 945 | total ~180-240 ms, collect 164 ms, rank 9 ms (two medians of 3: 182 and 236) |
+| `770817968652704265841785071059` | `--skip-preprocessing --degree 2` | 1878 | 945 | total 208-233 ms, median 229 (of 3), collect 187-213 ms, rank 9-13 ms (re-measured 2026-10-17, this task) |
 | `3426790303412814276981061` | `--skip-preprocessing --degree 2` | 301 | 251 | 35 ms total, collect 16+16 ms over 2 attempts (single) |
 | `35658606617546370626847644936101` hostile far-apart | `--skip-preprocessing --degree 2` | 3269 | 907 | 2174 ms median (of 3; full cascade resolves via ECM in ~205 ms instead) |
 
@@ -317,8 +346,8 @@ primary general-purpose engine). All rows re-measured on the current tree:
 | `1155285037654380637` 61-bit, `\|p-q\|=200004` | Fermat | 0 ms (single; GNFS path: 1702 ms at 3682/2422) |
 | `726421589145731 = 5467499 * 132861769` | p+1 after Fermat/p-1 misses | 753 ms historical row, kept for reference |
 | `28336447260686263324663` 76-bit | p+1 | 3191 ms historical row, kept for reference |
-| `166871515843890537614148105919789085907512212182703922830333764223351416812060867` 267-bit with a 21-digit factor | ECM after Fermat/p±1 misses | 533 ms median (of 3: ECM stage 332 ms at curves=112; YAFU takes ~836 ms on the same input) |
-| same 267-bit at `--timeout-seconds 1` | ECM | 5/5 wins, 393-473 ms (of 5) |
+| `166871515843890537614148105919789085907512212182703922830333764223351416812060867` 267-bit with a 21-digit factor | ECM after Fermat/p±1 misses | 859 ms median (of 3: totals 663/859/1024, ECM stage 452/584/623 at curves=112; YAFU historical ~836 ms median of 5 on the same input) |
+| same 267-bit at `--timeout-seconds 1` | ECM | 5/5 wins, 393-473 ms (of 5, historical earlier-tree row) / 3/5 wins, 676-692 ms (of 5, re-measured 2026-10-17, 2026.10.17.9.3) |
 | `768805586871186146129` 70-bit | SIQS | 27 ms historical row, kept for reference |
 | `3426790303412814276981061` 82-bit | SIQS forced route / p-1 default route | 35 ms / 12 ms (single) |
 | `768805586871186146129` 70-bit | p-1 after Fermat miss | 13 ms (single) |
@@ -327,17 +356,46 @@ Pre-SIQS single-polynomial QS entries for the same routes, preserved for
 history: 70-bit GNFS-2 forced-QS 86.3 s on a clean machine (collect 27.7 s,
 rank 48.0 s); 82-bit Rho fallback ~122 s (QS stalls near 10% usable yield).
 
-External reference (YAFU 3.1.9 static AVX2, 16 threads, identical inputs,
-re-measured 2026-10-17, 5 runs each side): 100-bit forced-SIQS gray ~180-240
-ms vs YAFU 157-218 ms elapsed, a tie within YAFU's own wide spread (the older
-290-vs-238 line was the same story at different machine state). Demo267 gray
-533 ms median vs YAFU ~836 ms elapsed (559-1198, ECM wins on both sides, same
-factor `121680281986369904489`). b70 default was not re-run against YAFU this
+External reference (YAFU 3.1.9 static AVX2, 16 threads, identical inputs;
+gray side re-measured 2026-10-17, release, 16 threads, medians of 3, this
+task; YAFU side NOT re-run — no YAFU binary at `logs/yafu-avx2.exe` or
+`yafu-refresh/` this round, so YAFU figures are historical values from the
+archived 2026-10-17 5-run set `logs/yafu-refresh/r1-r5`, not new
+measurements): 100-bit forced-SIQS gray 229 ms median (208/229/233) vs YAFU
+historical 157-218 ms elapsed (median ~179 of 5), a tie within YAFU's own
+wide spread (the older 290-vs-238 line was the same story at different
+machine state). Demo267 gray 859 ms median (663/859/1024; ECM wins on both
+sides, same factor `121680281986369904489`) vs YAFU historical ~836 ms
+median of 5 (559-1198). b70 default was not re-run against YAFU this
 round (prior: gray 25 ms pm1 vs YAFU 13 ms rho, noise-band tie). deg3-skip is
 unmeasurable as GNFS-vs-GNFS (YAFU answers in 4-5 ms via Fermat pretest, no
 GNFS mode). The largest honest gap used to be tight budgets (demo267 at 1 s:
-gray 0/5 clean `resource-limit` vs YAFU 7/10 wall-kills); the current tree
-wins that cell 5/5.
+gray 0/5 clean `resource-limit` vs YAFU 7/10 wall-kills); the earlier tree
+won that cell 5/5 (393-473 ms, historical), re-verified 3/5 (676-692 ms, n=5, 2026.10.17.9.3).
+
+### 267-bit repro case
+
+The `stress` tier ends with `repro_267`, the 267-bit ECM input
+`166871515843890537614148105919789085907512212182703922830333764223351416812060867`
+($121680281986369904489 \times 1371393237423486234387340775961402466614689310566958802486603$,
+product-verified). It carries its own 60 s deadline regardless of
+`--timeout-seconds`, and every bench run writes its raw per-case observations
+to the `--output` JSON file as an archive envelope: top-level provenance
+(`task_id`, `tier`, `timeout_seconds`, `threads_requested`,
+`threads_effective`, `case_filter`, the `random_*` seed settings, and
+`timestamp_unix_secs`) plus the `observations` array. Filenames use the ID
+form `logs/<task-id>/<task-id>-bench-<tier>.json` (no colons); pass
+`--task-id` so the file content and the file name agree. A single-case repro
+with its own tier:
+
+```powershell
+target\release\graynfs-bench.exe --tier repro267 --timeout-seconds 60 `
+  --task-id 2026.10.17.5.2 `
+  --output logs\2026.10.17.5.2\2026.10.17.5.2-bench-repro267.json
+```
+
+Measured 2026-10-17 (release, 16 threads): `repro_267` status ok, verified
+true, method `ecm`, total ~715 ms against the 60 s per-case deadline.
 
 ### Limits
 
@@ -360,8 +418,9 @@ The SIQS wall stood between 100 and 105 bits at default bounds, and it was
 a smoothness limit rather than a time limit. The starvation-gated width
 escalation closed the 105-bit cell: a hostile far-apart 105-bit semiprime
 (seeded, lpf-stripped) now factors at 3269/907 in ~2.2 s
-median (of 3, 2026-10-17) on the forced-degree-2 default path (product
-verified), while 110-bit and 120-bit exhausted 600 s the same way when last
+median (of 3, 2026-10-17) on the forced-degree-2 route at default bounds
+(`--skip-preprocessing --degree 2`; the flag forces the degree, the sieve bounds stay defaults)
+(product verified), while 110-bit and 120-bit exhausted 600 s the same way when last
 measured and 297-bit (90-digit m2) yields zero completed polynomials.
 Raising the LP bound was measured flat (usable +6.5% at 37x cost, pairing
 conversion 1.34% to 0.23%), so the wall beyond 105 bits is still smoothness,
@@ -458,14 +517,6 @@ silent-baseline-shift risk. Single-machine evidence only. Opt out explicitly:
 ```powershell
 cargo build -p graynfs-cli --release --no-default-features
 ```
-
-The workspace is at version `0.1.0`, a pre-release line with no SemVer
-compatibility guarantee. v0.1.0 was cut 2026-10-17. Releases are file-based:
-a release collects the pending changelog entries under a dated version
-heading, bumps `version` in the root `Cargo.toml` (`[workspace.package]`,
-inherited by every crate) and in `pyproject.toml`, then builds the wheel with
-the command above. No tags are created. Working docs stay out of git by
-staging discipline, never via ignore rules.
 
 ## License
 

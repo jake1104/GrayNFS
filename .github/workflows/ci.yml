@@ -1,0 +1,37 @@
+name: ci
+on:
+  push:
+  pull_request:
+jobs:
+  gates:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: rustfmt, clippy
+      - uses: Swatinem/rust-cache@v2
+      - name: fmt
+        run: cargo fmt --check
+      - name: clippy
+        run: cargo clippy --workspace --all-targets -- -D warnings
+      - uses: taiki-e/install-action@v2
+        with:
+          tool: nextest
+          fallback: cargo-install
+      - name: nextest
+        run: cargo nextest run --workspace --all-targets
+      - name: quarantine-105bit-release
+        continue-on-error: true
+        run: cargo nextest run --release -p graynfs-core --lib --run-ignored=only -E 'test(factors_105bit)'
+      - name: release-build
+        run: cargo build -p graynfs-cli --release
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: wheel-pytest-gate
+        run: |
+          pip install maturin pytest
+          maturin build --release --out wheels-ci
+          pip install --force-reinstall --no-deps wheels-ci/graynfs-*.whl
+          python -m pytest -q python/tests

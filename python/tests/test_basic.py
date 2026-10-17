@@ -113,3 +113,101 @@ def test_fermat_shortcircuit_and_opt_out() -> None:
 def test_threads_explicit():
     assert graynfs.factor(100160063, threads=1) == [10007, 10009]
     assert graynfs.factor(100160063, threads=4) == [10007, 10009]
+
+
+def test_version() -> None:
+    assert graynfs.version() == "0.1.1"
+
+
+def test_factor_rejects_non_integer() -> None:
+    for bad in ["15", 15.0, True, None]:
+        try:
+            graynfs.factor(bad)  # type: ignore[arg-type]
+        except TypeError:
+            pass
+        else:
+            raise AssertionError("expected TypeError for %r" % (bad,))
+
+
+def test_factor_rejects_non_positive() -> None:
+    for bad in [0, -1, -100160063]:
+        try:
+            graynfs.factor(bad)
+        except ValueError:
+            pass
+        else:
+            raise AssertionError("expected ValueError for %r" % (bad,))
+
+
+def test_is_probable_prime_rejects_non_integer() -> None:
+    for bad in ["97", 97.0, True, None]:
+        try:
+            graynfs.is_probable_prime(bad)  # type: ignore[arg-type]
+        except TypeError:
+            pass
+        else:
+            raise AssertionError("expected TypeError for %r" % (bad,))
+
+
+def test_factor_timeout_surfaces_value_error() -> None:
+    try:
+        graynfs.factor(
+            100160063,
+            degree=3,
+            timeout_seconds=0,
+            use_fermat=False,
+            use_pm1=False,
+            use_pp1=False,
+            use_ecm=False,
+        )
+    except ValueError as exc:
+        assert "deadline" in str(exc)
+    else:
+        raise AssertionError("expected ValueError")
+
+
+def test_factor_max_memory_passthrough() -> None:
+    assert graynfs.factor(15, max_memory_mb=None) == [3, 5]
+    try:
+        graynfs.factor(
+            100160063,
+            degree=3,
+            algebraic_base_bound=500,
+            sieve_a_bound=1600,
+            sieve_b_bound=700,
+            timeout_seconds=120,
+            max_memory_mb=0,
+            use_fermat=False,
+            use_pm1=False,
+            use_pp1=False,
+            use_ecm=False,
+        )
+    except ValueError as exc:
+        assert "resource-limit" in str(exc)
+    else:
+        raise AssertionError("expected ValueError")
+
+
+def test_factor_with_progress_event_shape() -> None:
+    events: list[dict] = []
+    assert graynfs.factor_with_progress(15, events.append) == [3, 5]
+    assert events
+    for event in events:
+        assert set(event) == {"stage", "current", "total", "message"}
+        assert isinstance(event["stage"], str)
+        assert isinstance(event["message"], str)
+
+
+def test_stage_timings_rejects_bad_input() -> None:
+    try:
+        graynfs.stage_timings(0)
+    except ValueError:
+        pass
+    else:
+        raise AssertionError("expected ValueError")
+    try:
+        graynfs.stage_timings("15")  # type: ignore[arg-type]
+    except TypeError:
+        pass
+    else:
+        raise AssertionError("expected TypeError")

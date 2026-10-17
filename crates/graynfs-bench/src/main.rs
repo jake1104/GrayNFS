@@ -18,6 +18,10 @@ struct Cli {
     tier: String,
     #[arg(long, default_value_t = 30)]
     timeout_seconds: u64,
+    #[arg(long)]
+    threads: Option<usize>,
+    #[arg(long, default_value = "adhoc")]
+    task_id: String,
     #[arg(long, default_value = "logs/graynfs-benchmark.json")]
     output: PathBuf,
     #[arg(long)]
@@ -40,6 +44,7 @@ struct Case {
     bits: usize,
     repeats: usize,
     wide: bool,
+    deadline_secs: Option<u64>,
 }
 
 #[derive(Clone, Debug, Serialize)]
@@ -68,8 +73,33 @@ struct Observation {
     stages: Vec<StageSample>,
 }
 
+#[derive(Clone, Debug, Serialize)]
+struct BenchArchive {
+    task_id: String,
+    tier: String,
+    timeout_seconds: u64,
+    threads_requested: Option<usize>,
+    threads_effective: usize,
+    case_filter: Option<String>,
+    random_count: usize,
+    random_seed: u64,
+    random_min_factor_bits: usize,
+    random_max_factor_bits: usize,
+    timestamp_unix_secs: u64,
+    observations: Vec<Observation>,
+}
+
 fn main() -> Result<(), Box<dyn std::error::Error>> {
     let cli = Cli::parse();
+    let threads_effective = cli.threads.unwrap_or(
+        std::thread::available_parallelism()
+            .map(|count| count.get())
+            .unwrap_or(1),
+    );
+    let timestamp_unix_secs = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|elapsed| elapsed.as_secs())
+        .unwrap_or(0);
     let mut cases = if cli.tier == "random" {
         random_cases(&cli)?
     } else {
@@ -84,19 +114,33 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     let mut observations = Vec::new();
     for case in &cases {
         for _ in 0..case.repeats {
-            observations.push(run_case(case, cli.timeout_seconds));
+            observations.push(run_case(case, cli.timeout_seconds, threads_effective));
         }
     }
     print_summary(&observations);
     if let Some(parent) = cli.output.parent() {
         fs::create_dir_all(parent)?;
     }
-    fs::write(&cli.output, serde_json::to_vec_pretty(&observations)?)?;
+    let archive = BenchArchive {
+        task_id: cli.task_id.clone(),
+        tier: cli.tier.clone(),
+        timeout_seconds: cli.timeout_seconds,
+        threads_requested: cli.threads,
+        threads_effective,
+        case_filter: cli.case_filter.clone(),
+        random_count: cli.random_count,
+        random_seed: cli.random_seed,
+        random_min_factor_bits: cli.random_min_factor_bits,
+        random_max_factor_bits: cli.random_max_factor_bits,
+        timestamp_unix_secs,
+        observations,
+    };
+    fs::write(&cli.output, serde_json::to_vec_pretty(&archive)?)?;
     println!("json: {}", cli.output.display());
     Ok(())
 }
 
-fn run_case(case: &Case, timeout_seconds: u64) -> Observation {
+fn run_case(case: &Case, timeout_seconds: u64, threads: usize) -> Observation {
     let options = if case.wide {
         let scale = wide_scale(case.bits);
         FactorOptions {
@@ -104,13 +148,19 @@ fn run_case(case: &Case, timeout_seconds: u64) -> Observation {
             algebraic_base_bound: 2_000 * scale,
             sieve_a_bound: 700 * scale,
             sieve_b_bound: 120 * scale,
-            max_duration: Some(Duration::from_secs(timeout_seconds)),
+            threads: Some(threads),
+            max_duration: Some(Duration::from_secs(
+                case.deadline_secs.unwrap_or(timeout_seconds),
+            )),
             allow_fallback: true,
             ..FactorOptions::default()
         }
     } else {
         FactorOptions {
-            max_duration: Some(Duration::from_secs(timeout_seconds)),
+            threads: Some(threads),
+            max_duration: Some(Duration::from_secs(
+                case.deadline_secs.unwrap_or(timeout_seconds),
+            )),
             allow_fallback: true,
             ..FactorOptions::default()
         }
@@ -235,6 +285,9 @@ fn wide_scale(bits: usize) -> usize {
 }
 
 fn build_cases(tier: &str) -> Result<Vec<Case>, Box<dyn std::error::Error>> {
+    if tier == "repro267" {
+        return Ok(vec![repro_267_case()]);
+    }
     if !matches!(tier, "quick" | "full" | "stress") {
         return Err(format!("unknown tier: {tier}").into());
     }
@@ -261,6 +314,7 @@ fn build_cases(tier: &str) -> Result<Vec<Case>, Box<dyn std::error::Error>> {
         cases.push(semiprime_case("stress_80", 80, 100, 1, true));
         cases.push(semiprime_case("stress_96", 96, 100, 1, true));
         cases.push(semiprime_case("stress_128", 128, 100, 1, true));
+        cases.push(repro_267_case());
     }
     Ok(cases)
 }
@@ -277,6 +331,7 @@ fn power_case(name: &str, base: u64, exponent: u32, repeats: usize) -> Case {
         expected,
         repeats,
         wide: false,
+        deadline_secs: None,
     }
 }
 
@@ -296,6 +351,7 @@ fn mixed_case(name: &str, factors: &[(u64, u32)], repeats: usize) -> Case {
         expected,
         repeats,
         wide: false,
+        deadline_secs: None,
     }
 }
 
@@ -309,6 +365,31 @@ fn semiprime_case(name: &str, bits: usize, offset: u64, repeats: usize, wide: bo
         expected: vec![first, second],
         repeats,
         wide,
+        deadline_secs: None,
+    }
+}
+
+fn repro_267_case() -> Case {
+    let value = Integer::from_str_radix(
+        "166871515843890537614148105919789085907512212182703922830333764223351416812060867",
+        10,
+    )
+    .expect("repro267 value parses");
+    let first =
+        Integer::from_str_radix("121680281986369904489", 10).expect("repro267 first factor parses");
+    let second = Integer::from_str_radix(
+        "1371393237423486234387340775961402466614689310566958802486603",
+        10,
+    )
+    .expect("repro267 second factor parses");
+    Case {
+        name: "repro_267".to_string(),
+        bits: 267,
+        value,
+        expected: vec![first, second],
+        repeats: 1,
+        wide: false,
+        deadline_secs: Some(60),
     }
 }
 
@@ -349,6 +430,7 @@ fn random_semiprime(name: &str, first_bits: usize, second_bits: usize, state: &m
         expected: vec![first, second],
         repeats: 1,
         wide: false,
+        deadline_secs: None,
     }
 }
 

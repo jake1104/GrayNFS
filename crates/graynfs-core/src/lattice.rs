@@ -1,4 +1,5 @@
 use num_traits::{ToPrimitive, Zero};
+use std::sync::atomic::AtomicBool;
 use std::time::Instant;
 
 use crate::hensel::budget_expired;
@@ -10,6 +11,7 @@ pub fn lll_reduce(
     mut basis: Vec<Vec<Integer>>,
     delta: f64,
     deadline: Option<Instant>,
+    stop: Option<&AtomicBool>,
 ) -> Vec<Vec<Integer>> {
     if basis.len() < 2 {
         return basis;
@@ -17,7 +19,7 @@ pub fn lll_reduce(
     let delta = if delta > 0.25 { delta } else { 0.75 };
     let max_iterations = 64 * basis.len() * basis.len() + 64;
     for _ in 0..max_iterations {
-        if budget_expired(deadline) {
+        if budget_expired(deadline, stop) {
             break;
         }
         let mut changed = false;
@@ -71,6 +73,7 @@ pub fn ideal_basis(
     root: u64,
     field: &NumberField,
     deadline: Option<Instant>,
+    stop: Option<&AtomicBool>,
 ) -> Vec<Vec<Integer>> {
     let mut basis = Vec::with_capacity(degree);
     let mut first = vec![Integer::from(0); degree];
@@ -87,14 +90,15 @@ pub fn ideal_basis(
         basis.push(vector);
     }
     let _ = field;
-    lll_reduce(basis, 0.75, deadline)
+    lll_reduce(basis, 0.75, deadline, stop)
 }
 
 pub fn shortest_vector(
     basis: Vec<Vec<Integer>>,
     deadline: Option<Instant>,
+    stop: Option<&AtomicBool>,
 ) -> Option<Vec<Integer>> {
-    lll_reduce(basis, 0.75, deadline)
+    lll_reduce(basis, 0.75, deadline, stop)
         .into_iter()
         .filter(|vector| vector.iter().any(|value| !value.is_zero()))
         .min_by_key(|vector| vector_norm_squared(vector))

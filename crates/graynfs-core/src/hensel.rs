@@ -1,5 +1,5 @@
 use num_traits::{Euclid, ToPrimitive, Zero};
-use std::sync::atomic::{AtomicU64, Ordering};
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::time::Instant;
 
 use crate::field::{ExtensionField, is_square, square_root};
@@ -7,28 +7,8 @@ use crate::integer::{Integer, integer_abs};
 use crate::number_field::{Element, NumberField};
 use crate::poly::{ModPolynomial, crt_reconstruct, factor_squarefree};
 
-static SOLVER_ABORT_NANOS: AtomicU64 = AtomicU64::new(0);
-
-fn now_nanos() -> u64 {
-    let elapsed = Instant::now().elapsed();
-    u64::try_from(elapsed.as_nanos()).unwrap_or(u64::MAX)
-}
-
-pub fn clear_solver_abort() {
-    SOLVER_ABORT_NANOS.store(0, Ordering::Relaxed);
-}
-
-pub fn solver_abort_now() {
-    SOLVER_ABORT_NANOS.store(now_nanos(), Ordering::Relaxed);
-}
-
-pub fn solver_aborted() -> bool {
-    let limit = SOLVER_ABORT_NANOS.load(Ordering::Relaxed);
-    limit != 0 && now_nanos() >= limit
-}
-
-pub fn budget_expired(deadline: Option<Instant>) -> bool {
-    if solver_aborted() {
+pub fn budget_expired(deadline: Option<Instant>, stop: Option<&AtomicBool>) -> bool {
+    if stop.is_some_and(|flag| flag.load(Ordering::Relaxed)) {
         return true;
     }
     deadline.is_some_and(|limit| Instant::now() >= limit)
@@ -139,6 +119,7 @@ pub fn find_square_root(
     field: &NumberField,
     value: &Element,
     deadline: Option<Instant>,
+    stop: Option<&AtomicBool>,
 ) -> Option<Element> {
     if value.coefficients.len() != field.degree {
         return None;
@@ -152,10 +133,10 @@ pub fn find_square_root(
         .max()
         .unwrap_or(0);
     let mut open: Vec<u64> = Vec::new();
-    if let Some(root) = field_root(&form, alpha, alpha_bits / 2 + 32, &mut open, deadline) {
+    if let Some(root) = field_root(&form, alpha, alpha_bits / 2 + 32, &mut open, deadline, stop) {
         return Some(root);
     }
-    if let Some(root) = field_root(&form, alpha, alpha_bits + 16, &mut open, deadline) {
+    if let Some(root) = field_root(&form, alpha, alpha_bits + 16, &mut open, deadline, stop) {
         return Some(root);
     }
     let capped: Vec<u64> = open
@@ -166,10 +147,10 @@ pub fn find_square_root(
     if capped.is_empty() {
         return None;
     }
-    if let Some(root) = hensel_root(&form, alpha, alpha_bits / 2 + 32, &capped, deadline) {
+    if let Some(root) = hensel_root(&form, alpha, alpha_bits / 2 + 32, &capped, deadline, stop) {
         return Some(root);
     }
-    hensel_root(&form, alpha, alpha_bits + 16, &capped, deadline)
+    hensel_root(&form, alpha, alpha_bits + 16, &capped, deadline, stop)
 }
 
 fn reduced_polynomial(form: &PolynomialForm, prime: u64) -> Option<ModPolynomial> {
@@ -244,10 +225,11 @@ fn field_root(
     bound_bits: u64,
     open: &mut Vec<u64>,
     deadline: Option<Instant>,
+    stop: Option<&AtomicBool>,
 ) -> Option<Element> {
     let mut misses = 0_usize;
     for &prime in SOLVER_PRIMES.iter() {
-        if budget_expired(deadline) {
+        if budget_expired(deadline, stop) {
             return None;
         }
         if misses >= FIELD_ROOT_MISSES {
@@ -268,7 +250,7 @@ fn field_root(
         let mut lifted = false;
         for seed in seeds.iter().take(SEED_LIMIT) {
             if let Some(candidate) =
-                lift_seed(form, &kernel, seed, alpha, prime, &modulus, deadline)
+                lift_seed(form, &kernel, seed, alpha, prime, &modulus, deadline, stop)
             {
                 return Some(candidate);
             }
@@ -302,16 +284,17 @@ fn hensel_root(
     bound_bits: u64,
     primes: &[u64],
     deadline: Option<Instant>,
+    stop: Option<&AtomicBool>,
 ) -> Option<Element> {
     for &prime in primes.iter() {
-        if budget_expired(deadline) {
+        if budget_expired(deadline, stop) {
             return None;
         }
         let mut modulus = Integer::from(prime);
         while modulus.bits() <= bound_bits {
             modulus *= prime;
         }
-        if let Some(root) = hensel_for_prime(form, alpha, prime, &modulus, deadline) {
+        if let Some(root) = hensel_for_prime(form, alpha, prime, &modulus, deadline, stop) {
             return Some(root);
         }
     }
@@ -324,6 +307,7 @@ fn hensel_for_prime(
     prime: u64,
     modulus: &Integer,
     deadline: Option<Instant>,
+    stop: Option<&AtomicBool>,
 ) -> Option<Element> {
     let degree = form.degree;
     let p = prime as i128;
@@ -331,14 +315,14 @@ fn hensel_for_prime(
     let residues: Vec<i128> = alpha.iter().map(|value| residue(value, prime)).collect();
     let mut seed = vec![0_i128; degree];
     loop {
-        if budget_expired(deadline) {
+        if budget_expired(deadline, stop) {
             return None;
         }
         if system_holds_mod(form, &kernel, &seed, &residues, p) {
             let jacobian = jacobian_matrix(form, &kernel, &seed, p);
             if determinant(jacobian, p) != 0
                 && let Some(candidate) =
-                    lift_seed(form, &kernel, &seed, alpha, prime, modulus, deadline)
+                    lift_seed(form, &kernel, &seed, alpha, prime, modulus, deadline, stop)
             {
                 return Some(candidate);
             }
@@ -360,6 +344,7 @@ fn next_seed(seed: &mut [i128], p: i128) -> bool {
     false
 }
 
+#[allow(clippy::too_many_arguments)]
 fn lift_seed(
     form: &PolynomialForm,
     kernel: &[Vec<i128>],
@@ -368,13 +353,14 @@ fn lift_seed(
     prime: u64,
     modulus: &Integer,
     deadline: Option<Instant>,
+    stop: Option<&AtomicBool>,
 ) -> Option<Element> {
     let degree = form.degree;
     let p = prime as i128;
     let mut value: Vec<Integer> = seed.iter().map(|item| Integer::from(*item)).collect();
     let mut place = Integer::from(prime);
     while &place < modulus {
-        if budget_expired(deadline) {
+        if budget_expired(deadline, stop) {
             return None;
         }
         let residuals = form.residuals(&value, alpha);
@@ -620,7 +606,7 @@ mod tests {
         let beta =
             Element::from_coefficients(vec![Integer::from(1), Integer::from(2), Integer::from(3)]);
         let alpha = field.multiply(&beta, &beta);
-        let root = find_square_root(&field, &alpha, None).expect("hensel cubic root");
+        let root = find_square_root(&field, &alpha, None, None).expect("hensel cubic root");
         assert_eq!(field.multiply(&root, &root), alpha);
     }
 
@@ -634,7 +620,7 @@ mod tests {
             Integer::from(11),
         ]);
         let alpha = field.multiply(&beta, &beta);
-        let root = find_square_root(&field, &alpha, None).expect("hensel quartic root");
+        let root = find_square_root(&field, &alpha, None, None).expect("hensel quartic root");
         assert_eq!(field.multiply(&root, &root), alpha);
     }
 
@@ -649,7 +635,7 @@ mod tests {
             Integer::from(11) * &two.pow(50_u32),
         ]);
         let alpha = field.multiply(&beta, &beta);
-        let root = find_square_root(&field, &alpha, None).expect("large hensel quartic root");
+        let root = find_square_root(&field, &alpha, None, None).expect("large hensel quartic root");
         assert_eq!(field.multiply(&root, &root), alpha);
     }
 
@@ -659,7 +645,7 @@ mod tests {
             let field = pure_field(degree, constant);
             let beta = Element::from_coefficients((1..=degree as i64).map(Integer::from).collect());
             let alpha = field.multiply(&beta, &beta);
-            let root = find_square_root(&field, &alpha, None).expect("hensel higher root");
+            let root = find_square_root(&field, &alpha, None, None).expect("hensel higher root");
             assert_eq!(field.multiply(&root, &root), alpha);
         }
     }
@@ -674,7 +660,7 @@ mod tests {
             Integer::from(2),
         ]);
         let alpha = field.multiply(&beta, &beta);
-        let root = find_square_root(&field, &alpha, None).expect("non pure quartic root");
+        let root = find_square_root(&field, &alpha, None, None).expect("non pure quartic root");
         assert_eq!(field.multiply(&root, &root), alpha);
     }
 
@@ -687,7 +673,7 @@ mod tests {
             Integer::from(5),
         ]);
         let alpha = field.multiply(&beta, &beta);
-        let root = find_square_root(&field, &alpha, None).expect("non pure cubic root");
+        let root = find_square_root(&field, &alpha, None, None).expect("non pure cubic root");
         assert_eq!(field.multiply(&root, &root), alpha);
     }
 
@@ -702,7 +688,8 @@ mod tests {
             Integer::from(3) * &two.pow(50_u32),
         ]);
         let alpha = field.multiply(&beta, &beta);
-        let root = find_square_root(&field, &alpha, None).expect("large non pure quartic root");
+        let root =
+            find_square_root(&field, &alpha, None, None).expect("large non pure quartic root");
         assert_eq!(field.multiply(&root, &root), alpha);
     }
 }

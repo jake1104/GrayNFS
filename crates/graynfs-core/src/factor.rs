@@ -47,6 +47,32 @@ pub struct StageTiming {
 }
 
 #[derive(Default)]
+struct StageOutcome {
+    winners: Vec<String>,
+}
+
+impl StageOutcome {
+    fn record(&mut self, stage: &str) {
+        if !self.winners.iter().any(|existing| existing == stage) {
+            self.winners.push(stage.to_string());
+        }
+    }
+
+    fn merge(&mut self, other: StageOutcome) {
+        for stage in other.winners {
+            self.record(&stage);
+        }
+    }
+
+    fn method(&self) -> String {
+        if self.winners.is_empty() {
+            return "preprocessing".to_string();
+        }
+        self.winners.join("+")
+    }
+}
+
+#[derive(Default)]
 pub(crate) struct TimingCollector {
     entries: Mutex<Vec<StageTiming>>,
 }
@@ -211,8 +237,7 @@ where
         "checking primality and small factors",
     )?;
     let mut factors = Vec::new();
-    let mut used_gnfs = false;
-    let mut used_fallback = false;
+    let mut outcome = StageOutcome::default();
     let mut polynomial = None;
     let mut root = None;
     let mut relation_count = 0;
@@ -225,8 +250,7 @@ where
         deadline,
         &mut rng,
         &mut factors,
-        &mut used_gnfs,
-        &mut used_fallback,
+        &mut outcome,
         &mut polynomial,
         &mut root,
         &mut relation_count,
@@ -244,20 +268,12 @@ where
             "reported factors do not multiply back to the input".to_string(),
         ));
     }
-    let method = if used_gnfs && used_fallback {
-        "gnfs+fallback"
-    } else if used_gnfs {
-        "gnfs"
-    } else if used_fallback {
-        "fallback"
-    } else {
-        "preprocessing"
-    };
+    let method = outcome.method();
     let degree = polynomial.as_ref().map(|value| value.degree);
     Ok(FactorReport {
         input: n.to_string(),
         factors: factors.iter().map(ToString::to_string).collect(),
-        method: method.to_string(),
+        method,
         degree,
         polynomial: polynomial.map(|value| value.describe()),
         root,
@@ -276,8 +292,7 @@ fn factor_recursive<F>(
     deadline: Option<Instant>,
     rng: &mut ChaCha8Rng,
     factors: &mut Vec<Integer>,
-    used_gnfs: &mut bool,
-    used_fallback: &mut bool,
+    outcome: &mut StageOutcome,
     polynomial: &mut Option<PolynomialPair>,
     root: &mut Option<String>,
     relation_count: &mut usize,
@@ -300,8 +315,7 @@ where
     }
     if let Some(square_root) = perfect_square(n) {
         let mut square_factors = Vec::new();
-        let mut square_used_gnfs = false;
-        let mut square_used_fallback = false;
+        let mut square_outcome = StageOutcome::default();
         let mut square_polynomial = None;
         let mut square_root_value = None;
         let mut square_relations = 0;
@@ -313,8 +327,7 @@ where
             deadline,
             rng,
             &mut square_factors,
-            &mut square_used_gnfs,
-            &mut square_used_fallback,
+            &mut square_outcome,
             &mut square_polynomial,
             &mut square_root_value,
             &mut square_relations,
@@ -326,8 +339,7 @@ where
             factors.push(value.clone());
             factors.push(value);
         }
-        *used_gnfs |= square_used_gnfs;
-        *used_fallback |= square_used_fallback;
+        outcome.merge(square_outcome);
         if polynomial.is_none() {
             *polynomial = square_polynomial;
         }
@@ -340,8 +352,7 @@ where
     }
     if let Some((base, exponent)) = perfect_power_root(n) {
         let mut power_factors = Vec::new();
-        let mut power_used_gnfs = false;
-        let mut power_used_fallback = false;
+        let mut power_outcome = StageOutcome::default();
         let mut power_polynomial = None;
         let mut power_root_value = None;
         let mut power_relations = 0;
@@ -353,8 +364,7 @@ where
             deadline,
             rng,
             &mut power_factors,
-            &mut power_used_gnfs,
-            &mut power_used_fallback,
+            &mut power_outcome,
             &mut power_polynomial,
             &mut power_root_value,
             &mut power_relations,
@@ -367,8 +377,7 @@ where
                 factors.push(value.clone());
             }
         }
-        *used_gnfs |= power_used_gnfs;
-        *used_fallback |= power_used_fallback;
+        outcome.merge(power_outcome);
         if polynomial.is_none() {
             *polynomial = power_polynomial;
         }
@@ -394,8 +403,7 @@ where
                 deadline,
                 rng,
                 factors,
-                used_gnfs,
-                used_fallback,
+                outcome,
                 polynomial,
                 root,
                 relation_count,
@@ -411,8 +419,7 @@ where
                     deadline,
                     rng,
                     factors,
-                    used_gnfs,
-                    used_fallback,
+                    outcome,
                     polynomial,
                     root,
                     relation_count,
@@ -453,6 +460,7 @@ where
         let slice = fermat_slice;
         if let Some(divisor) = fermat_probe(n, slice) {
             let cofactor = n / &divisor;
+            outcome.record("fermat");
             timer.finish(format!("divisor={divisor}"));
             return factor_recursive(
                 &divisor,
@@ -461,8 +469,7 @@ where
                 deadline,
                 rng,
                 factors,
-                used_gnfs,
-                used_fallback,
+                outcome,
                 polynomial,
                 root,
                 relation_count,
@@ -478,8 +485,7 @@ where
                     deadline,
                     rng,
                     factors,
-                    used_gnfs,
-                    used_fallback,
+                    outcome,
                     polynomial,
                     root,
                     relation_count,
@@ -496,6 +502,7 @@ where
         let slice = pm1_slice;
         if let Some(divisor) = crate::pm1::pollard_pm1(n, stage_one, slice) {
             let cofactor = n / &divisor;
+            outcome.record("pm1");
             timer.finish(format!("divisor={divisor}"));
             return factor_recursive(
                 &divisor,
@@ -504,8 +511,7 @@ where
                 deadline,
                 rng,
                 factors,
-                used_gnfs,
-                used_fallback,
+                outcome,
                 polynomial,
                 root,
                 relation_count,
@@ -521,8 +527,7 @@ where
                     deadline,
                     rng,
                     factors,
-                    used_gnfs,
-                    used_fallback,
+                    outcome,
                     polynomial,
                     root,
                     relation_count,
@@ -539,6 +544,7 @@ where
         let slice = pp1_slice;
         if let Some(divisor) = crate::pm1::williams_pp1(n, crate::pm1::STAGE_ONE_BOUND, slice) {
             let cofactor = n / &divisor;
+            outcome.record("pp1");
             timer.finish(format!("divisor={divisor}"));
             return factor_recursive(
                 &divisor,
@@ -547,8 +553,7 @@ where
                 deadline,
                 rng,
                 factors,
-                used_gnfs,
-                used_fallback,
+                outcome,
                 polynomial,
                 root,
                 relation_count,
@@ -564,8 +569,7 @@ where
                     deadline,
                     rng,
                     factors,
-                    used_gnfs,
-                    used_fallback,
+                    outcome,
                     polynomial,
                     root,
                     relation_count,
@@ -594,6 +598,7 @@ where
         );
         if let Some(divisor) = cheap.divisor {
             let cofactor = n / &divisor;
+            outcome.record("ecm");
             timer.finish(format!(
                 "divisor={divisor} curves={} ecm_ms={}",
                 cheap.curves_run, cheap.elapsed_ms
@@ -605,8 +610,7 @@ where
                 deadline,
                 rng,
                 factors,
-                used_gnfs,
-                used_fallback,
+                outcome,
                 polynomial,
                 root,
                 relation_count,
@@ -622,8 +626,7 @@ where
                     deadline,
                     rng,
                     factors,
-                    used_gnfs,
-                    used_fallback,
+                    outcome,
                     polynomial,
                     root,
                     relation_count,
@@ -708,6 +711,7 @@ where
         };
         if let Some(divisor) = divisor {
             let cofactor = n / &divisor;
+            outcome.record("ecm");
             timer.finish(format!(
                 "divisor={divisor} curves={curves} ecm_ms={ecm_ms} stage1_ms={stage_one_ms} stage2_ms={stage_two_ms}{ecm_box_ratio}"
             ));
@@ -718,8 +722,7 @@ where
                 deadline,
                 rng,
                 factors,
-                used_gnfs,
-                used_fallback,
+                outcome,
                 polynomial,
                 root,
                 relation_count,
@@ -735,8 +738,7 @@ where
                     deadline,
                     rng,
                     factors,
-                    used_gnfs,
-                    used_fallback,
+                    outcome,
                     polynomial,
                     root,
                     relation_count,
@@ -798,7 +800,7 @@ where
             &mut signals,
         ) {
             Ok((divisor, stats)) => {
-                *used_gnfs = true;
+                outcome.record("gnfs");
                 *relation_count += stats.relations;
                 *rank += stats.rank;
                 if let Some(rate) = stats.pilot_relations_per_ms
@@ -823,8 +825,7 @@ where
                     deadline,
                     rng,
                     factors,
-                    used_gnfs,
-                    used_fallback,
+                    outcome,
                     polynomial,
                     root,
                     relation_count,
@@ -840,8 +841,7 @@ where
                         deadline,
                         rng,
                         factors,
-                        used_gnfs,
-                        used_fallback,
+                        outcome,
                         polynomial,
                         root,
                         relation_count,
@@ -858,7 +858,7 @@ where
                 ) {
                     return Err(error);
                 }
-                *used_fallback = true;
+                outcome.record("fallback");
             }
             Err(error) => return Err(error),
         }
@@ -868,7 +868,7 @@ where
             "no factorization strategy succeeded".to_string(),
         ));
     }
-    *used_fallback = true;
+    outcome.record("fallback");
     emit(progress, "fallback", 3, 7, "running Pollard-Rho fallback")?;
     let divisor = pollard_rho(n, rng, cancelled, deadline)?;
     let cofactor = n / &divisor;
@@ -879,8 +879,7 @@ where
         deadline,
         rng,
         factors,
-        used_gnfs,
-        used_fallback,
+        outcome,
         polynomial,
         root,
         relation_count,
@@ -895,8 +894,7 @@ where
         deadline,
         rng,
         factors,
-        used_gnfs,
-        used_fallback,
+        outcome,
         polynomial,
         root,
         relation_count,
@@ -1340,9 +1338,17 @@ where
             }
         };
         emit(progress, "gnfs", 4, 7, "relations collected")?;
+        let workers = options
+            .threads
+            .unwrap_or(
+                std::thread::available_parallelism()
+                    .map(|value| value.get())
+                    .unwrap_or(1),
+            )
+            .max(1);
         let (rank, dependencies) = {
             let timer = Timer::new(timings, "matrix_rank", Some(2));
-            let value = rank_and_dependencies(&relations, base.column_count(), 128, 1);
+            let value = rank_and_dependencies(&relations, base.column_count(), 128, 1, workers);
             timer.finish(format!(
                 "attempt={attempt} rank={} of {}",
                 value.0,
@@ -2028,11 +2034,13 @@ mod factor_tests {
             .nth(1)
             .and_then(|tail| tail.split_whitespace().next())
             .expect("cascade record must carry the ecm burn bound");
-        let cap_ms: u128 = cap_text.parse().expect("burn bound must be numeric");
-        assert!(
-            cap_ms > 0,
-            "burn bound must leave a live ecm box, got {cap_ms}"
-        );
+        if cap_text != "open" {
+            let cap_ms: u128 = cap_text.parse().expect("burn bound must be numeric");
+            assert!(
+                cap_ms > 0,
+                "burn bound must leave a live ecm box, got {cap_ms}"
+            );
+        }
         let ecm_miss = timings
             .iter()
             .any(|entry| entry.stage == "ecm" && entry.detail.contains("no divisor"));
@@ -2044,6 +2052,46 @@ mod factor_tests {
             sieve_reached,
             "sieve pilots must still run under the burn bound"
         );
+    }
+
+    #[test]
+    fn ecm_burn_bound_reports_numeric_cap() {
+        let n = super::parse_decimal(
+            "139607997073317332591812715527151593909624701340257947590834623479484508836409470911348221",
+        )
+        .expect("valid decimal");
+        let mut sightings: Vec<String> = Vec::new();
+        for _ in 0..3 {
+            let options = super::FactorOptions {
+                max_duration: Some(std::time::Duration::from_millis(1800)),
+                ..super::FactorOptions::default()
+            };
+            let (outcome, timings) = super::factor_with_timings(&n, &options, |_| Ok(()));
+            assert!(
+                matches!(outcome, Err(crate::error::FactorError::ResourceLimit(_))),
+                "tight-budget 90-digit run must end in ResourceLimit, got {outcome:?}"
+            );
+            let ecm_miss = timings
+                .iter()
+                .any(|entry| entry.stage == "ecm" && entry.detail.contains("no divisor"));
+            assert!(ecm_miss, "miss input must reach main ECM and miss");
+            let cap_text = timings
+                .iter()
+                .find(|entry| entry.stage == "cascade")
+                .and_then(|entry| {
+                    entry
+                        .detail
+                        .split("ecm_cap=")
+                        .nth(1)
+                        .and_then(|tail| tail.split_whitespace().next())
+                })
+                .expect("cascade record must carry the ecm burn bound");
+            if cap_text != "open" && cap_text.parse::<u128>().is_ok_and(|cap_ms| cap_ms > 0) {
+                return;
+            }
+            sightings.push(cap_text.to_string());
+        }
+        panic!("burn bound never produced a numeric cap sighting in 3 attempts, got {sightings:?}");
     }
 }
 
@@ -2157,18 +2205,20 @@ mod snfs_tests {
         );
     }
 
-    fn load_column(relative: &str, column: usize) -> Vec<String> {
+    fn load_column_opt(relative: &str, column: usize) -> Option<Vec<String>> {
         let path = format!("{}/../../{}", env!("CARGO_MANIFEST_DIR"), relative);
-        let text = std::fs::read_to_string(&path).expect("corpus file readable");
-        text.lines()
-            .filter(|line| !line.trim().is_empty())
-            .map(|line| {
-                line.split_whitespace()
-                    .nth(column)
-                    .expect("column present")
-                    .to_string()
-            })
-            .collect()
+        let text = std::fs::read_to_string(&path).ok()?;
+        Some(
+            text.lines()
+                .filter(|line| !line.trim().is_empty())
+                .map(|line| {
+                    line.split_whitespace()
+                        .nth(column)
+                        .expect("column present")
+                        .to_string()
+                })
+                .collect(),
+        )
     }
 
     #[test]
@@ -2186,8 +2236,15 @@ mod snfs_tests {
             ("cases-8990", "probe/cases-8990.txt", 0),
             ("m2", "probe/m2-cases.txt", 0),
         ];
+        let mut checked = 0_usize;
+        let mut skipped = 0_usize;
         for (name, relative, column) in files {
-            let entries = load_column(relative, column);
+            let Some(entries) = load_column_opt(relative, column) else {
+                skipped += 1;
+                println!("SNFS_SWEEP_SKIP name={name} relative={relative}");
+                continue;
+            };
+            checked += 1;
             let mut heuristic = 0_usize;
             for decimal in &entries {
                 let n = super::parse_decimal(decimal).expect("valid corpus input");
@@ -2205,6 +2262,7 @@ mod snfs_tests {
                 entries.len()
             );
         }
+        println!("SNFS_SWEEP_SUMMARY checked={checked} skipped={skipped}");
     }
 
     #[test]

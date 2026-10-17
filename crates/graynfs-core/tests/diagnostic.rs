@@ -34,8 +34,8 @@ fn inspect_quadratic_relations() {
         &mut progress,
     )
     .expect("relations");
-    let rank = matrix_rank(&relations, base.column_count());
-    let dependencies = find_dependencies(&relations, base.column_count(), 128);
+    let rank = matrix_rank(&relations, base.column_count(), 1);
+    let dependencies = find_dependencies(&relations, base.column_count(), 128, 1);
     println!(
         "base={} algebraic={} relations={} rank={} dependencies={}",
         base.rational_primes.len(),

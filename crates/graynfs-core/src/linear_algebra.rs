@@ -15,6 +15,7 @@ pub fn rank_and_dependencies<M: Masked>(
     column_count: usize,
     limit: usize,
     min_weight: usize,
+    workers: usize,
 ) -> (usize, Vec<Vec<usize>>) {
     if relations.is_empty() || column_count == 0 {
         return (0, Vec::new());
@@ -111,9 +112,7 @@ pub fn rank_and_dependencies<M: Masked>(
     }
     let candidate_rows: Vec<usize> = (0..used.len()).filter(|row| is_candidate[*row]).collect();
     let mut candidates: Vec<(usize, usize, Vec<u64>)> = Vec::new();
-    let workers = std::thread::available_parallelism()
-        .map(|count| count.get())
-        .unwrap_or(1);
+    let workers = workers.max(1);
     if workers == 1 || candidate_rows.len() < 64 {
         for &relation_index in &candidate_rows {
             let mut combo = vec![0_u64; relation_words];
@@ -196,12 +195,13 @@ pub fn find_dependencies(
     relations: &[Relation],
     column_count: usize,
     limit: usize,
+    workers: usize,
 ) -> Vec<Vec<usize>> {
-    rank_and_dependencies(relations, column_count, limit, 1).1
+    rank_and_dependencies(relations, column_count, limit, 1, workers).1
 }
 
-pub fn matrix_rank(relations: &[Relation], column_count: usize) -> usize {
-    rank_and_dependencies(relations, column_count, 0, usize::MAX).0
+pub fn matrix_rank(relations: &[Relation], column_count: usize, workers: usize) -> usize {
+    rank_and_dependencies(relations, column_count, 0, usize::MAX, workers).0
 }
 
 pub(crate) fn order_dependencies_by_cost(dependencies: &[Vec<usize>]) -> Vec<usize> {
@@ -212,7 +212,23 @@ pub(crate) fn order_dependencies_by_cost(dependencies: &[Vec<usize>]) -> Vec<usi
 
 #[cfg(test)]
 mod tests {
-    use super::order_dependencies_by_cost;
+    use super::{Masked, order_dependencies_by_cost, rank_and_dependencies};
+
+    struct TestRelation {
+        mask: Vec<u64>,
+    }
+
+    impl Masked for TestRelation {
+        fn mask(&self) -> &[u64] {
+            &self.mask
+        }
+    }
+
+    fn duplicate_relations(count: usize, word: u64) -> Vec<TestRelation> {
+        (0..count)
+            .map(|_| TestRelation { mask: vec![word] })
+            .collect()
+    }
 
     #[test]
     fn cost_order_sorts_by_length_stably() {
@@ -220,5 +236,31 @@ mod tests {
         assert_eq!(order_dependencies_by_cost(&dependencies), vec![3, 1, 2, 0]);
         let empty: Vec<Vec<usize>> = Vec::new();
         assert!(order_dependencies_by_cost(&empty).is_empty());
+    }
+
+    #[test]
+    fn single_worker_matches_parallel_workers_on_large_candidate_set() {
+        let relations = duplicate_relations(128, 0b0011);
+        let (single_rank, single) = rank_and_dependencies(&relations, 4, 128, 1, 1);
+        let (parallel_rank, parallel) = rank_and_dependencies(&relations, 4, 128, 1, 8);
+        assert_eq!(single_rank, parallel_rank);
+        assert_eq!(single, parallel);
+        assert!(!single.is_empty());
+        for dependency in &single {
+            let mut word = 0_u64;
+            for &index in dependency {
+                word ^= relations[index].mask[0];
+            }
+            assert_eq!(word, 0);
+        }
+    }
+
+    #[test]
+    fn zero_workers_falls_back_to_single_worker() {
+        let relations = duplicate_relations(96, 0b0110);
+        let (expected_rank, expected) = rank_and_dependencies(&relations, 4, 128, 1, 1);
+        let (actual_rank, actual) = rank_and_dependencies(&relations, 4, 128, 1, 0);
+        assert_eq!(expected_rank, actual_rank);
+        assert_eq!(expected, actual);
     }
 }

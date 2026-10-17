@@ -19,7 +19,7 @@ def _validate_number(value: int) -> str:
     if isinstance(value, bool) or not isinstance(value, int):
         raise TypeError("n must be an integer")
     if value < 1:
-        raise ValueError("n must be a positive integer")
+        raise ValueError("input: n must be a positive integer")
     return str(value)
 
 
@@ -32,6 +32,7 @@ def factor(
     sieve_a_bound: int = 700,
     sieve_b_bound: int = 120,
     timeout_seconds: int | None = None,
+    max_memory_mb: int | None = None,
     allow_fallback: bool = True,
     use_fermat: bool = True,
     use_squfof: bool = True,
@@ -52,6 +53,7 @@ def factor(
             sieve_a_bound,
             sieve_b_bound,
             timeout_seconds,
+            max_memory_mb,
             allow_fallback,
             use_fermat,
             use_squfof,
@@ -75,6 +77,7 @@ def factor_with_progress(
     sieve_a_bound: int = 700,
     sieve_b_bound: int = 120,
     timeout_seconds: int | None = None,
+    max_memory_mb: int | None = None,
     allow_fallback: bool = True,
     use_fermat: bool = True,
     use_squfof: bool = True,
@@ -98,6 +101,7 @@ def factor_with_progress(
             sieve_a_bound,
             sieve_b_bound,
             timeout_seconds,
+            max_memory_mb,
             allow_fallback,
             use_fermat,
             use_squfof,
@@ -128,6 +132,7 @@ def stage_timings(
     sieve_a_bound: int = 700,
     sieve_b_bound: int = 120,
     timeout_seconds: int | None = None,
+    max_memory_mb: int | None = None,
     allow_fallback: bool = True,
     use_fermat: bool = True,
     use_squfof: bool = True,
@@ -153,6 +158,7 @@ def stage_timings(
             sieve_a_bound,
             sieve_b_bound,
             timeout_seconds,
+            max_memory_mb,
             allow_fallback,
             use_fermat,
             use_squfof,

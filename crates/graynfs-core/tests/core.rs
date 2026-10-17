@@ -33,6 +33,47 @@ fn factors_small_integers() {
 }
 
 #[test]
+fn fermat_win_reports_fermat_method() {
+    let number = parse_decimal("1000036000099").expect("valid input");
+    let report = factor(&number, &FactorOptions::default()).expect("factorization succeeds");
+    assert_eq!(report.method, "fermat");
+    let mut actual = report.factors.clone();
+    actual.sort();
+    assert_eq!(actual, vec!["1000003", "1000033"]);
+    assert_eq!(product(&report.factors), number);
+}
+
+#[test]
+fn pm1_win_reports_pm1_method() {
+    let number = parse_decimal("17497577401").expect("valid input");
+    let options = FactorOptions {
+        use_fermat: false,
+        use_pp1: false,
+        use_ecm: false,
+        use_gnfs: false,
+        allow_fallback: false,
+        ..FactorOptions::default()
+    };
+    let report = factor(&number, &options).expect("factorization succeeds");
+    assert_eq!(report.method, "pm1");
+    assert_eq!(product(&report.factors), number);
+}
+
+#[test]
+fn unsupported_degree_fails_before_fallback() {
+    let number = parse_decimal("100160063").expect("valid input");
+    let options = FactorOptions {
+        degree: Some(6),
+        allow_fallback: true,
+        ..FactorOptions::default()
+    };
+    assert!(matches!(
+        factor(&number, &options),
+        Err(FactorError::InvalidInput(_))
+    ));
+}
+
+#[test]
 fn preserves_duplicate_factors_from_squares() {
     let number = parse_decimal("289").expect("valid input");
     let report = factor(&number, &FactorOptions::default()).expect("factorization succeeds");
@@ -133,6 +174,7 @@ fn cubic_gnfs_factors_semiprime() {
         sieve_b_bound: 700,
         max_duration: Some(Duration::from_secs(90)),
         allow_fallback: false,
+        skip_preprocessing: true,
         ..FactorOptions::default()
     };
     let report = factor(&number, &options).expect("cubic GNFS factorization succeeds");
@@ -154,6 +196,7 @@ fn cubic_gnfs_handles_denser_factor_base() {
         sieve_b_bound: 800,
         max_duration: Some(Duration::from_secs(90)),
         allow_fallback: false,
+        skip_preprocessing: true,
         ..FactorOptions::default()
     };
     let report = factor(&number, &options).expect("cubic GNFS factorization succeeds");
@@ -175,6 +218,7 @@ fn quartic_gnfs_factors_semiprime() {
         sieve_b_bound: 1_500,
         max_duration: Some(Duration::from_secs(1_200)),
         allow_fallback: false,
+        skip_preprocessing: true,
         ..FactorOptions::default()
     };
     let report = factor(&number, &options).expect("quartic GNFS factorization succeeds");
@@ -195,6 +239,7 @@ fn wide_gnfs_regression() {
         sieve_b_bound: 300,
         max_duration: Some(Duration::from_secs(120)),
         allow_fallback: false,
+        skip_preprocessing: true,
         ..FactorOptions::default()
     };
     let report = factor(&number, &options).expect("GNFS factorization succeeds");
@@ -216,6 +261,7 @@ fn siqs_parallel_factors_small_semiprime() {
         ..FactorOptions::default()
     };
     let report = factor(&number, &options).expect("SIQS factorization succeeds");
+    assert_eq!(report.method, "gnfs");
     let mut actual = report.factors.clone();
     actual.sort();
     assert_eq!(actual, vec!["10007", "10009"]);

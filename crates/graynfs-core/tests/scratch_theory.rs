@@ -29,7 +29,7 @@ fn attempt(number: &graynfs_core::Integer, options: &FactorOptions, polynomial: 
         &mut progress,
     )
     .expect("relations");
-    let rank = matrix_rank(&relations, base.column_count());
+    let rank = matrix_rank(&relations, base.column_count(), 1);
     println!(
         "attempt base={} columns={} relations={} rank={} elapsed={}ms",
         base.rational_primes.len(),
@@ -41,7 +41,7 @@ fn attempt(number: &graynfs_core::Integer, options: &FactorOptions, polynomial: 
     if relations.len() <= rank {
         return;
     }
-    let dependencies = find_dependencies(&relations, base.column_count(), 128);
+    let dependencies = find_dependencies(&relations, base.column_count(), 128, 1);
     println!("dependencies={}", dependencies.len());
     let ring = QuadraticRing::new(polynomial.constant());
     for (di, dependency) in dependencies.iter().enumerate() {

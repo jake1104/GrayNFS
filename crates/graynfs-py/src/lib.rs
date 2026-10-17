@@ -5,8 +5,29 @@ use pyo3::exceptions::PyValueError;
 use pyo3::prelude::*;
 use pyo3::types::PyDict;
 
+fn error_category(error: &FactorError) -> &'static str {
+    match error {
+        FactorError::InvalidInput(_) => "input",
+        FactorError::ResourceLimit(_) => "resource-limit",
+        FactorError::Cancelled => "cancelled",
+        _ => "internal",
+    }
+}
+
+fn error_detail(error: &FactorError) -> String {
+    match error {
+        FactorError::InvalidInput(detail) | FactorError::ResourceLimit(detail) => detail.clone(),
+        FactorError::Cancelled => "the operation was cancelled".to_string(),
+        other => other.to_string(),
+    }
+}
+
+fn py_error_message(error: &FactorError) -> String {
+    format!("{}: {}", error_category(error), error_detail(error))
+}
+
 fn to_py_error(error: graynfs_core::FactorError) -> PyErr {
-    PyValueError::new_err(error.to_string())
+    PyValueError::new_err(py_error_message(&error))
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -17,6 +38,7 @@ fn build_options(
     sieve_a_bound: usize,
     sieve_b_bound: usize,
     timeout_seconds: Option<u64>,
+    max_memory_mb: Option<usize>,
     allow_fallback: bool,
     use_fermat: bool,
     use_squfof: bool,
@@ -34,6 +56,7 @@ fn build_options(
         sieve_a_bound,
         sieve_b_bound,
         max_duration: timeout_seconds.map(std::time::Duration::from_secs),
+        max_memory_mb,
         allow_fallback,
         use_fermat,
         use_squfof,
@@ -49,7 +72,7 @@ fn build_options(
 
 #[allow(clippy::too_many_arguments)]
 #[pyfunction]
-#[pyo3(signature = (n, degree=None, rational_base_bound=2000, algebraic_base_bound=2000, sieve_a_bound=700, sieve_b_bound=120, timeout_seconds=None, allow_fallback=true, use_fermat=true, use_squfof=true, use_pm1=true, use_pp1=true, use_ecm=true, use_mpqs=true, threads=None, perf_mode=false))]
+#[pyo3(signature = (n, degree=None, rational_base_bound=2000, algebraic_base_bound=2000, sieve_a_bound=700, sieve_b_bound=120, timeout_seconds=None, max_memory_mb=None, allow_fallback=true, use_fermat=true, use_squfof=true, use_pm1=true, use_pp1=true, use_ecm=true, use_mpqs=true, threads=None, perf_mode=false))]
 fn factor_decimal(
     py: Python<'_>,
     n: &str,
@@ -59,6 +82,7 @@ fn factor_decimal(
     sieve_a_bound: usize,
     sieve_b_bound: usize,
     timeout_seconds: Option<u64>,
+    max_memory_mb: Option<usize>,
     allow_fallback: bool,
     use_fermat: bool,
     use_squfof: bool,
@@ -77,6 +101,7 @@ fn factor_decimal(
         sieve_a_bound,
         sieve_b_bound,
         timeout_seconds,
+        max_memory_mb,
         allow_fallback,
         use_fermat,
         use_squfof,
@@ -95,7 +120,7 @@ fn factor_decimal(
 
 #[allow(clippy::too_many_arguments)]
 #[pyfunction]
-#[pyo3(signature = (n, callback=None, degree=None, rational_base_bound=2000, algebraic_base_bound=2000, sieve_a_bound=700, sieve_b_bound=120, timeout_seconds=None, allow_fallback=true, use_fermat=true, use_squfof=true, use_pm1=true, use_pp1=true, use_ecm=true, use_mpqs=true, threads=None, perf_mode=false))]
+#[pyo3(signature = (n, callback=None, degree=None, rational_base_bound=2000, algebraic_base_bound=2000, sieve_a_bound=700, sieve_b_bound=120, timeout_seconds=None, max_memory_mb=None, allow_fallback=true, use_fermat=true, use_squfof=true, use_pm1=true, use_pp1=true, use_ecm=true, use_mpqs=true, threads=None, perf_mode=false))]
 fn factor_with_progress_decimal(
     py: Python<'_>,
     n: &str,
@@ -106,6 +131,7 @@ fn factor_with_progress_decimal(
     sieve_a_bound: usize,
     sieve_b_bound: usize,
     timeout_seconds: Option<u64>,
+    max_memory_mb: Option<usize>,
     allow_fallback: bool,
     use_fermat: bool,
     use_squfof: bool,
@@ -124,6 +150,7 @@ fn factor_with_progress_decimal(
         sieve_a_bound,
         sieve_b_bound,
         timeout_seconds,
+        max_memory_mb,
         allow_fallback,
         use_fermat,
         use_squfof,
@@ -171,6 +198,7 @@ fn factor_with_progress_decimal(
             sieve_a_bound,
             sieve_b_bound,
             timeout_seconds,
+            max_memory_mb,
             allow_fallback,
             use_fermat,
             use_squfof,
@@ -192,7 +220,7 @@ fn is_probable_prime_decimal(py: Python<'_>, n: &str) -> PyResult<bool> {
 
 #[allow(clippy::too_many_arguments)]
 #[pyfunction]
-#[pyo3(signature = (n, degree=None, rational_base_bound=2000, algebraic_base_bound=2000, sieve_a_bound=700, sieve_b_bound=120, timeout_seconds=None, allow_fallback=true, use_fermat=true, use_squfof=true, use_pm1=true, use_pp1=true, use_ecm=true, use_mpqs=true, threads=None, perf_mode=false))]
+#[pyo3(signature = (n, degree=None, rational_base_bound=2000, algebraic_base_bound=2000, sieve_a_bound=700, sieve_b_bound=120, timeout_seconds=None, max_memory_mb=None, allow_fallback=true, use_fermat=true, use_squfof=true, use_pm1=true, use_pp1=true, use_ecm=true, use_mpqs=true, threads=None, perf_mode=false))]
 fn stage_timings_decimal(
     py: Python<'_>,
     n: &str,
@@ -202,6 +230,7 @@ fn stage_timings_decimal(
     sieve_a_bound: usize,
     sieve_b_bound: usize,
     timeout_seconds: Option<u64>,
+    max_memory_mb: Option<usize>,
     allow_fallback: bool,
     use_fermat: bool,
     use_squfof: bool,
@@ -220,6 +249,7 @@ fn stage_timings_decimal(
         sieve_a_bound,
         sieve_b_bound,
         timeout_seconds,
+        max_memory_mb,
         allow_fallback,
         use_fermat,
         use_squfof,
@@ -247,6 +277,95 @@ fn stage_timings_decimal(
 #[pyfunction]
 fn version() -> &'static str {
     env!("CARGO_PKG_VERSION")
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn base_options(max_memory_mb: Option<usize>) -> FactorOptions {
+        build_options(
+            None,
+            2000,
+            2000,
+            700,
+            120,
+            None,
+            max_memory_mb,
+            true,
+            true,
+            true,
+            true,
+            true,
+            true,
+            true,
+            None,
+            false,
+        )
+    }
+
+    #[test]
+    fn build_options_carries_memory_budget() {
+        let options = base_options(Some(512));
+        assert_eq!(options.max_memory_mb, Some(512));
+        assert_eq!(options.memory_budget_bytes(), 512 * 1024 * 1024);
+    }
+
+    #[test]
+    fn build_options_defaults_to_unbounded_budget() {
+        let options = base_options(None);
+        assert_eq!(options.max_memory_mb, None);
+    }
+
+    #[test]
+    fn error_category_maps_input() {
+        let error = FactorError::InvalidInput("bad digit".to_string());
+        assert_eq!(error_category(&error), "input");
+        assert!(py_error_message(&error).starts_with("input: "));
+    }
+
+    #[test]
+    fn error_category_maps_resource_limit() {
+        let error = FactorError::ResourceLimit("deadline".to_string());
+        assert_eq!(error_category(&error), "resource-limit");
+        assert!(py_error_message(&error).starts_with("resource-limit: "));
+    }
+
+    #[test]
+    fn error_category_maps_cancelled() {
+        let error = FactorError::Cancelled;
+        assert_eq!(error_category(&error), "cancelled");
+        assert!(py_error_message(&error).starts_with("cancelled: "));
+    }
+
+    #[test]
+    fn error_category_maps_internal_variants() {
+        let variants = [
+            FactorError::NoPolynomial,
+            FactorError::SearchExhausted,
+            FactorError::InsufficientRelations {
+                found: 1,
+                required: 2,
+            },
+            FactorError::AlgebraicSquareRootFailed,
+            FactorError::LinearAlgebra("rank".to_string()),
+            FactorError::Factorization("boom".to_string()),
+            FactorError::UnsupportedDegree(3),
+        ];
+        for error in &variants {
+            assert_eq!(error_category(error), "internal");
+            assert!(py_error_message(error).starts_with("internal: "));
+        }
+    }
+
+    #[test]
+    fn py_error_message_carries_detail() {
+        let error = FactorError::InvalidInput("invalid decimal integer: abc".to_string());
+        assert_eq!(
+            py_error_message(&error),
+            "input: invalid decimal integer: abc"
+        );
+    }
 }
 
 #[pymodule]

@@ -1,5 +1,28 @@
 use std::time::Duration;
 
+pub const DEFAULT_MEMORY_BUDGET_BYTES: u64 = 1 << 30;
+pub const MEMORY_BYTES_PER_COLUMN: u64 = 64;
+pub const MEMORY_BYTES_PER_SIEVE_POSITION: u64 = 68;
+
+pub fn estimate_collect_bytes(columns: usize, half_width: i64, workers: usize) -> u64 {
+    let width = half_width.max(0) as u64 * 2 + 1;
+    columns as u64 * MEMORY_BYTES_PER_COLUMN
+        + width * MEMORY_BYTES_PER_SIEVE_POSITION * workers.max(1) as u64
+}
+
+pub fn estimate_rank_bytes(columns: usize, relations: usize) -> u64 {
+    let mask_words = columns.div_ceil(64) as u64;
+    let relation_words = relations.div_ceil(64) as u64;
+    columns as u64 * (mask_words + relation_words) * 8
+}
+
+pub fn estimate_relation_matrix_megabytes(column_count: usize) -> usize {
+    let columns = column_count.max(1) as u64;
+    let words = columns.div_ceil(64);
+    let rows = (columns * 3 / 2 + 16).max(16);
+    usize::try_from((rows * words * 8 + columns * 8).div_ceil(1024 * 1024)).unwrap_or(usize::MAX)
+}
+
 #[derive(Clone, Debug)]
 pub struct FactorOptions {
     pub degree: Option<usize>,
@@ -58,15 +81,29 @@ impl Default for FactorOptions {
 }
 
 impl FactorOptions {
+    pub fn memory_budget_bytes(&self) -> u64 {
+        match self.max_memory_mb {
+            Some(mb) => (mb as u64).saturating_mul(1024 * 1024),
+            None => DEFAULT_MEMORY_BUDGET_BYTES,
+        }
+    }
+
     pub fn validate(&self) -> Result<(), crate::FactorError> {
-        if self.degree == Some(0) {
+        if let Some(degree) = self.degree
+            && !(2..=5).contains(&degree)
+        {
+            return Err(crate::FactorError::InvalidInput(format!(
+                "unsupported degree {degree}: supported degrees are 2, 3, 4 and 5"
+            )));
+        }
+        if !self.use_squfof {
             return Err(crate::FactorError::InvalidInput(
-                "degree must be greater than zero".to_string(),
+                "use_squfof is reserved for a future SQUFOF stage and has no effect".to_string(),
             ));
         }
-        if !(0.0..=0.5).contains(&self.degree_race_fraction) {
+        if !(0.05..=0.5).contains(&self.degree_race_fraction) {
             return Err(crate::FactorError::InvalidInput(
-                "degree race fraction must be between zero and one half".to_string(),
+                "degree race fraction must be between 0.05 and 0.5".to_string(),
             ));
         }
         if self.rational_base_bound < 2 || self.algebraic_base_bound < 2 {
@@ -92,5 +129,106 @@ impl FactorOptions {
         self.sieve_a_bound = a;
         self.sieve_b_bound = b;
         self
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn memory_budget_defaults_to_one_gibibyte() {
+        let options = FactorOptions::default();
+        assert_eq!(options.max_memory_mb, None);
+        assert_eq!(options.memory_budget_bytes(), DEFAULT_MEMORY_BUDGET_BYTES);
+        assert_eq!(DEFAULT_MEMORY_BUDGET_BYTES, 1 << 30);
+    }
+
+    #[test]
+    fn memory_budget_scales_megabytes() {
+        let options = FactorOptions {
+            max_memory_mb: Some(512),
+            ..FactorOptions::default()
+        };
+        assert_eq!(options.memory_budget_bytes(), 512 * 1024 * 1024);
+        let zero = FactorOptions {
+            max_memory_mb: Some(0),
+            ..FactorOptions::default()
+        };
+        assert_eq!(zero.memory_budget_bytes(), 0);
+    }
+
+    #[test]
+    fn estimators_grow_with_problem_size() {
+        let small = estimate_collect_bytes(100, 700, 1);
+        let large = estimate_collect_bytes(1_000, 7_000, 1);
+        assert!(large > small);
+        let small_rank = estimate_rank_bytes(100, 100);
+        let large_rank = estimate_rank_bytes(1_000, 1_000);
+        assert!(large_rank > small_rank);
+        assert!(estimate_relation_matrix_megabytes(200_000) > 1_024);
+    }
+
+    #[test]
+    fn degree_accepts_supported_two_through_five() {
+        for degree in [2_usize, 3, 4, 5] {
+            let options = FactorOptions {
+                degree: Some(degree),
+                ..FactorOptions::default()
+            };
+            assert!(options.validate().is_ok());
+        }
+        assert!(FactorOptions::default().validate().is_ok());
+    }
+
+    #[test]
+    fn degree_outside_supported_range_is_invalid() {
+        for degree in [0_usize, 1, 6, 7, 100] {
+            let options = FactorOptions {
+                degree: Some(degree),
+                ..FactorOptions::default()
+            };
+            assert!(matches!(
+                options.validate(),
+                Err(crate::FactorError::InvalidInput(_))
+            ));
+        }
+    }
+
+    #[test]
+    fn reserved_squfof_toggle_is_rejected() {
+        let options = FactorOptions {
+            use_squfof: false,
+            ..FactorOptions::default()
+        };
+        assert!(matches!(
+            options.validate(),
+            Err(crate::FactorError::InvalidInput(_))
+        ));
+        assert!(FactorOptions::default().validate().is_ok());
+    }
+
+    #[test]
+    fn degree_race_fraction_boundaries() {
+        for fraction in [0.0, 0.04, 0.51] {
+            let options = FactorOptions {
+                degree_race_fraction: fraction,
+                ..FactorOptions::default()
+            };
+            assert!(
+                matches!(options.validate(), Err(crate::FactorError::InvalidInput(_))),
+                "fraction {fraction} should be rejected"
+            );
+        }
+        for fraction in [0.05, 0.2, 0.5] {
+            let options = FactorOptions {
+                degree_race_fraction: fraction,
+                ..FactorOptions::default()
+            };
+            assert!(
+                options.validate().is_ok(),
+                "fraction {fraction} should be accepted"
+            );
+        }
     }
 }

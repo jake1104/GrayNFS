@@ -10,9 +10,10 @@ use crate::factor::{StageTiming, Timer, TimingCollector};
 use crate::integer::{Integer, IntegerExt, integer_abs, integer_gcd, integer_sqrt};
 use crate::lattice::{ideal_basis, shortest_vector};
 use crate::linear_algebra::{Masked, rank_and_dependencies};
-use crate::number_field::{Element, NumberField};
-use crate::options::FactorOptions;
+use crate::number_field::{Element, NumberField, polynomial_discriminant};
+use crate::options::{FactorOptions, estimate_collect_bytes, estimate_relation_matrix_megabytes};
 use crate::poly::ModPolynomial;
+use crate::poly::is_irreducible;
 use crate::poly::mod_inverse;
 use crate::polynomial::PolynomialPair;
 use crate::prime::{is_prime_u64_deterministic, mul_mod, sieve_primes};
@@ -330,13 +331,6 @@ fn bounded_u64(value: usize) -> u64 {
     u64::try_from(value).unwrap_or(u64::MAX)
 }
 
-fn relation_matrix_megabytes(column_count: usize) -> usize {
-    let columns = column_count.max(1) as u64;
-    let words = columns.div_ceil(64);
-    let rows = (columns * 3 / 2 + 16).max(16);
-    usize::try_from((rows * words * 8 + columns * 8).div_ceil(1024 * 1024)).unwrap_or(usize::MAX)
-}
-
 fn dependency_workers(dep_count: usize, options: &FactorOptions) -> usize {
     let threads = options_thread_count(options);
     threads.min(dep_count).max(1)
@@ -405,6 +399,7 @@ fn scan_dependencies(
                 units,
                 base,
                 deadline,
+                None,
                 units_enabled,
             );
             if let Some(divisor) = attempt {
@@ -416,7 +411,6 @@ fn scan_dependencies(
     let found = Mutex::new(None);
     let stop = AtomicBool::new(false);
     let attempted: Mutex<Vec<(usize, usize)>> = Mutex::new(Vec::new());
-    crate::hensel::clear_solver_abort();
     let chunk = attempt_count.div_ceil(workers);
     let queue: Vec<Vec<usize>> = (0..workers)
         .map(|worker| {
@@ -453,6 +447,7 @@ fn scan_dependencies(
                         units,
                         base,
                         deadline,
+                        Some(stop),
                         units_enabled,
                     );
                     let elapsed_ms = started.elapsed().as_millis();
@@ -465,7 +460,6 @@ fn scan_dependencies(
                     {
                         *slot = Some((true_index, divisor));
                         stop.store(true, Ordering::Relaxed);
-                        crate::hensel::solver_abort_now();
                     }
                 }
             });
@@ -544,9 +538,13 @@ fn gnfs_divisor_timed(
     }
     let polynomial = {
         let timer = Timer::new(Some(collector), "select_polynomial", Some(degree));
-        let value = select_polynomial(n, degree, options.polynomial_candidates)?;
-        timer.finish(format!("m={}", value.m));
-        value
+        let selection = select_polynomial_with_stats(n, degree, options.polynomial_candidates)?;
+        let detail = format!(
+            "m={} rejected_small={} rejected_final={}",
+            selection.polynomial.m, selection.small_rejections, selection.final_rejections
+        );
+        timer.finish(detail);
+        selection.polynomial
     };
     let field = {
         let timer = Timer::new(Some(collector), "number_field", Some(degree));
@@ -565,20 +563,16 @@ fn gnfs_divisor_timed(
             options.large_prime_bound,
         )?;
         timer.finish(format!("columns={}", value.column_count()));
-        if let Some(limit) = options.max_memory_mb
-            && relation_matrix_megabytes(value.column_count()) > limit
-        {
+        let budget_mb = options.memory_budget_bytes().div_ceil(1024 * 1024);
+        let need_mb = estimate_relation_matrix_megabytes(value.column_count());
+        if need_mb as u64 > budget_mb {
             return Err(FactorError::ResourceLimit(format!(
-                "the relation matrix would need about {} MiB, above the configured limit of {limit} MiB",
-                relation_matrix_megabytes(value.column_count())
+                "the relation matrix would need about {need_mb} MiB, above the memory budget of {budget_mb} MiB"
             )));
         }
         value
     };
     let bound = unit_search_bound(field.degree);
-    // Lazy units: the first scan runs with `units_enabled=false` and never reads
-    // `units` (returns None before touching them), so defer `find_units` until a
-    // second scan actually needs them. Identical vector when computed.
     let mut units: Option<Vec<Element>> = None;
     let (mut relations, mut bank): (Vec<GeneralRelation>, PartialBank) = {
         let timer = Timer::new(Some(collector), "relation_collection", Some(degree));
@@ -590,6 +584,8 @@ fn gnfs_divisor_timed(
             options,
             cancelled,
             deadline,
+            collector,
+            degree,
         )?;
         let value: Vec<GeneralRelation> = complete
             .into_iter()
@@ -604,7 +600,13 @@ fn gnfs_divisor_timed(
     };
     let (mut rank, mut dependencies) = {
         let timer = Timer::new(Some(collector), "matrix_rank", Some(degree));
-        let value = rank_and_dependencies(&relations, base.column_count(), 1024, 2);
+        let value = rank_and_dependencies(
+            &relations,
+            base.column_count(),
+            1024,
+            2,
+            options_thread_count(options),
+        );
         timer.finish(format!("rank={} of {}", value.0, relations.len()));
         value
     };
@@ -618,7 +620,13 @@ fn gnfs_divisor_timed(
             .filter(|relation| relation.mask.iter().any(|word| *word != 0))
             .collect();
         relations = filtered;
-        let rerank = rank_and_dependencies(&relations, base.column_count(), 1024, 2);
+        let rerank = rank_and_dependencies(
+            &relations,
+            base.column_count(),
+            1024,
+            2,
+            options_thread_count(options),
+        );
         rank = rerank.0;
         dependencies = rerank.1;
         let detail = format!(
@@ -629,7 +637,6 @@ fn gnfs_divisor_timed(
             base.column_count().saturating_sub(pre_columns),
             rank
         );
-        eprintln!("DRAIN {detail}");
         collector.record_elapsed(
             "drain",
             Some(degree),
@@ -712,6 +719,52 @@ fn gnfs_divisor_timed(
 
 const SMALL_INDEX_PRIMES: [u64; 10] = [2, 3, 5, 7, 11, 13, 17, 19, 23, 29];
 
+const IRREDUCIBILITY_PRIMES: [u64; 10] = [2, 3, 5, 7, 11, 13, 17, 19, 23, 29];
+
+const IRREDUCIBILITY_RETRY_PRIMES: [u64; 2] = [1009, 1013];
+
+enum IrreducibilityOutcome {
+    AcceptedSmall,
+    AcceptedRetry,
+    Rejected,
+}
+
+fn irreducible_mod_any(candidate: &PolynomialPair, primes: &[u64]) -> bool {
+    for prime in primes {
+        let residues: Vec<u64> = candidate
+            .coefficients
+            .iter()
+            .map(|value| residue_mod(value, *prime))
+            .collect();
+        let reduced = ModPolynomial::new(residues, *prime);
+        if reduced.degree() != candidate.degree {
+            continue;
+        }
+        if is_irreducible(&reduced, *prime) {
+            return true;
+        }
+    }
+    false
+}
+
+fn classify_irreducibility(candidate: &PolynomialPair) -> IrreducibilityOutcome {
+    if irreducible_mod_any(candidate, &IRREDUCIBILITY_PRIMES) {
+        IrreducibilityOutcome::AcceptedSmall
+    } else if irreducible_mod_any(candidate, &IRREDUCIBILITY_RETRY_PRIMES) {
+        IrreducibilityOutcome::AcceptedRetry
+    } else {
+        IrreducibilityOutcome::Rejected
+    }
+}
+
+#[cfg(test)]
+fn is_irreducible_candidate(candidate: &PolynomialPair) -> bool {
+    !matches!(
+        classify_irreducibility(candidate),
+        IrreducibilityOutcome::Rejected
+    )
+}
+
 fn has_unit_index(polynomial: &PolynomialPair) -> bool {
     let value = integer_abs(&discriminant(polynomial));
     if value.is_zero() {
@@ -779,13 +832,30 @@ pub fn inspect_polynomial(n: &Integer, degree: usize) -> Result<PolynomialPair, 
     select_polynomial(n, degree, FactorOptions::default().polynomial_candidates)
 }
 
+struct PolynomialSelection {
+    polynomial: PolynomialPair,
+    small_rejections: usize,
+    final_rejections: usize,
+}
+
+#[cfg(test)]
 fn select_polynomial(
     n: &Integer,
     degree: usize,
     candidates: usize,
 ) -> Result<PolynomialPair, FactorError> {
+    select_polynomial_with_stats(n, degree, candidates).map(|selection| selection.polynomial)
+}
+
+fn select_polynomial_with_stats(
+    n: &Integer,
+    degree: usize,
+    candidates: usize,
+) -> Result<PolynomialSelection, FactorError> {
     let mut m = integer_root(n, degree);
     let mut best: Option<(PolynomialPair, f64)> = None;
+    let mut small_rejections = 0_usize;
+    let mut final_rejections = 0_usize;
     for _ in 0..candidates.max(1) {
         let power = integer_pow(&m, degree);
         if m >= Integer::from(1) && n > &power {
@@ -795,10 +865,14 @@ fn select_polynomial(
                     let mut coefficients = vec![Integer::from(0); degree + 1];
                     coefficients[0] = constant;
                     coefficients[degree] = Integer::from(1);
-                    return Ok(PolynomialPair {
-                        degree,
-                        coefficients,
-                        m,
+                    return Ok(PolynomialSelection {
+                        polynomial: PolynomialPair {
+                            degree,
+                            coefficients,
+                            m,
+                        },
+                        small_rejections,
+                        final_rejections,
                     });
                 }
                 for linear in [1_i64, 2, 4, 5, 7, 8, 10, 11] {
@@ -826,6 +900,17 @@ fn select_polynomial(
                             coefficients,
                             m: m.clone(),
                         };
+                        match classify_irreducibility(&candidate) {
+                            IrreducibilityOutcome::Rejected => {
+                                small_rejections += 1;
+                                final_rejections += 1;
+                                continue;
+                            }
+                            IrreducibilityOutcome::AcceptedRetry => {
+                                small_rejections += 1;
+                            }
+                            IrreducibilityOutcome::AcceptedSmall => {}
+                        }
                         if has_unit_index(&candidate) {
                             let score = polynomial_sample_score(&candidate);
                             let replace = match &best {
@@ -842,8 +927,12 @@ fn select_polynomial(
         }
         m -= Integer::from(1);
     }
-    best.map(|(candidate, _)| candidate)
-        .ok_or(FactorError::NoPolynomial)
+    best.map(|(candidate, _)| PolynomialSelection {
+        polynomial: candidate,
+        small_rejections,
+        final_rejections,
+    })
+    .ok_or(FactorError::NoPolynomial)
 }
 
 struct ScanContext<'a> {
@@ -869,6 +958,7 @@ fn check_limits(cancelled: &AtomicBool, deadline: Option<Instant>) -> Result<(),
     Ok(())
 }
 
+#[allow(clippy::too_many_arguments)]
 fn collect_relations(
     n: &Integer,
     polynomial: &PolynomialPair,
@@ -877,11 +967,20 @@ fn collect_relations(
     options: &FactorOptions,
     cancelled: &AtomicBool,
     deadline: Option<Instant>,
+    collector: &TimingCollector,
+    degree: usize,
 ) -> Result<(Vec<GeneralRelation>, PartialBank), FactorError> {
     let max_a = i64::try_from(options.sieve_a_bound)
         .map_err(|_| FactorError::InvalidInput("sieve a bound is too large".to_string()))?;
     let max_b = i64::try_from(options.sieve_b_bound)
         .map_err(|_| FactorError::InvalidInput("sieve b bound is too large".to_string()))?;
+    let workers = options_thread_count(options);
+    if estimate_collect_bytes(base.column_count(), max_a, workers) > options.memory_budget_bytes() {
+        return Err(FactorError::ResourceLimit(format!(
+            "general sieve arrays would exceed the memory budget of {} MiB",
+            options.memory_budget_bytes().div_ceil(1024 * 1024)
+        )));
+    }
     let sieve_roots = base.sieve_roots(&polynomial.m);
     let lp_cache = Mutex::new(std::mem::take(&mut base.large_prime_roots));
     let mut context = ScanContext {
@@ -901,6 +1000,7 @@ fn collect_relations(
     let mut attempt_b = max_b;
     let mut usable_total = 0_usize;
     for _ in 0..5 {
+        let pass_started = Instant::now();
         let rational_scores = build_rational_scores(context.base, attempt_a);
         let rational_masks = RationalMasks::build(context.base, attempt_a);
         context.max_a = attempt_a;
@@ -922,12 +1022,17 @@ fn collect_relations(
             .iter()
             .filter(|relation| relation.mask.iter().any(|word| *word != 0))
             .count();
-        eprintln!(
-            "COLLECT sieve_pass={} columns={} target={} usable={}",
-            complete.len(),
-            context.base.column_count(),
-            target_relations(context.base.column_count()),
-            usable_total
+        collector.record_elapsed(
+            "collect",
+            Some(degree),
+            pass_started.elapsed().as_millis(),
+            format!(
+                "sieve_pass={} columns={} target={} usable={}",
+                complete.len(),
+                context.base.column_count(),
+                target_relations(context.base.column_count()),
+                usable_total
+            ),
         );
         if usable_total >= target_relations(context.base.column_count()) {
             break;
@@ -2053,6 +2158,7 @@ fn extract_factor(
     units: &[Element],
     base: &GeneralBase,
     deadline: Option<Instant>,
+    stop: Option<&AtomicBool>,
     units_enabled: bool,
 ) -> Option<Integer> {
     if let Some(divisor) =
@@ -2088,16 +2194,16 @@ fn extract_factor(
         return None;
     }
     let corrected =
-        match unit_corrected_square_root(field, &algebraic, units, deadline, units_enabled) {
+        match unit_corrected_square_root(field, &algebraic, units, deadline, stop, units_enabled) {
             Some(corrected) => corrected,
             None => {
                 if let Some(result) = ideal_corrected_square_root(
-                    field, &algebraic, relations, dependency, base, deadline,
+                    field, &algebraic, relations, dependency, base, deadline, stop,
                 ) {
                     result
                 } else {
                     CorrectedSquareRoot {
-                        root: algebraic_square_root(field, &algebraic, deadline)?,
+                        root: algebraic_square_root(field, &algebraic, deadline, stop)?,
                         unit: Element::one(field.degree),
                         power: 0,
                     }
@@ -2138,6 +2244,7 @@ fn ideal_corrected_square_root(
     dependency: &[usize],
     base: &GeneralBase,
     deadline: Option<Instant>,
+    stop: Option<&AtomicBool>,
 ) -> Option<CorrectedSquareRoot> {
     let mut columns = HashMap::new();
     for (prime, root, column) in &base.algebraic_roots {
@@ -2173,8 +2280,9 @@ fn ideal_corrected_square_root(
             return None;
         }
         if let Some(vector) = shortest_vector(
-            ideal_basis(field.degree, prime, root, field, deadline),
+            ideal_basis(field.degree, prime, root, field, deadline, stop),
             deadline,
+            stop,
         ) {
             let size = usize::try_from(
                 vector
@@ -2200,7 +2308,7 @@ fn ideal_corrected_square_root(
     let generator_square = field.multiply(&generator, &generator);
     if let Some(inverse) = element_inverse(field, &generator_square) {
         let target = field.multiply(value, &inverse);
-        if let Some(root) = algebraic_square_root(field, &target, deadline)
+        if let Some(root) = algebraic_square_root(field, &target, deadline, stop)
             && field.multiply(&root, &root) == target
         {
             return Some(CorrectedSquareRoot {
@@ -2216,7 +2324,7 @@ fn ideal_corrected_square_root(
             return None;
         }
         target = field.multiply(&target, &generator);
-        if let Some(root) = algebraic_square_root(field, &target, deadline)
+        if let Some(root) = algebraic_square_root(field, &target, deadline, stop)
             && field.multiply(&root, &root) == target
         {
             return Some(CorrectedSquareRoot {
@@ -2265,7 +2373,7 @@ fn ideal_corrected_square_root(
             let square = field.multiply(&partial, &partial);
             if let Some(inverse) = element_inverse(field, &square) {
                 let target = field.multiply(value, &inverse);
-                if let Some(root) = algebraic_square_root(field, &target, deadline)
+                if let Some(root) = algebraic_square_root(field, &target, deadline, stop)
                     && field.multiply(&root, &root) == target
                 {
                     return Some(CorrectedSquareRoot {
@@ -2287,11 +2395,19 @@ struct CorrectedSquareRoot {
 }
 
 fn unit_search_bound(degree: usize) -> i64 {
-    if degree <= 3 { 16_i64 } else { 6_i64 }
+    if degree <= 3 {
+        16_i64
+    } else if degree == 4 {
+        6_i64
+    } else if degree == 5 {
+        2_i64
+    } else {
+        0_i64
+    }
 }
 
 fn find_units(field: &NumberField, bound: i64, limit: usize) -> Vec<Element> {
-    if !matches!(field.degree, 3 | 4) || bound < 1 || limit == 0 {
+    if !matches!(field.degree, 3..=5) || bound < 1 || limit == 0 {
         return Vec::new();
     }
     let range: Vec<Integer> = (-bound..=bound).map(Integer::from).collect();
@@ -2462,6 +2578,7 @@ fn algebraic_square_root(
     field: &NumberField,
     value: &Element,
     deadline: Option<Instant>,
+    stop: Option<&AtomicBool>,
 ) -> Option<Element> {
     if value.coefficients.len() == field.degree {
         let norm = field.norm(value);
@@ -2473,13 +2590,13 @@ fn algebraic_square_root(
             return None;
         }
     }
-    if let Some(root) = crate::cubic::find_square_root(field, value, deadline) {
+    if let Some(root) = crate::cubic::find_square_root(field, value, deadline, stop) {
         return Some(root);
     }
     if field.degree == 3 {
         return None;
     }
-    crate::hensel::find_square_root(field, value, deadline)
+    crate::hensel::find_square_root(field, value, deadline, stop)
 }
 
 fn unit_corrected_square_root(
@@ -2487,9 +2604,10 @@ fn unit_corrected_square_root(
     value: &Element,
     units: &[Element],
     deadline: Option<Instant>,
+    stop: Option<&AtomicBool>,
     units_enabled: bool,
 ) -> Option<CorrectedSquareRoot> {
-    if let Some(root) = algebraic_square_root(field, value, deadline) {
+    if let Some(root) = algebraic_square_root(field, value, deadline, stop) {
         return Some(CorrectedSquareRoot {
             root,
             unit: Element::one(field.degree),
@@ -2500,7 +2618,7 @@ fn unit_corrected_square_root(
         return None;
     }
     for (scaled, unit, power) in unit_corrected_targets(field, value, units) {
-        if let Some(root) = algebraic_square_root(field, &scaled, deadline)
+        if let Some(root) = algebraic_square_root(field, &scaled, deadline, stop)
             && field.multiply(&root, &root) == scaled
         {
             return Some(CorrectedSquareRoot { root, unit, power });
@@ -2557,63 +2675,6 @@ fn is_perfect_power(value: &Integer, degree: usize) -> bool {
 
 fn discriminant(polynomial: &PolynomialPair) -> Integer {
     polynomial_discriminant(&polynomial.coefficients)
-}
-
-fn polynomial_discriminant(coefficients: &[Integer]) -> Integer {
-    let degree = coefficients.len() - 1;
-    if degree < 2 {
-        return Integer::from(1);
-    }
-    let mut derivative = vec![Integer::from(0); degree];
-    for index in 1..=degree {
-        derivative[index - 1] = &coefficients[index] * Integer::from(index);
-    }
-    let size = degree + degree - 1;
-    let mut matrix = vec![vec![Integer::from(0); size]; size];
-    for row in 0..degree - 1 {
-        for offset in 0..=degree {
-            matrix[row][row + offset] = coefficients[degree - offset].clone();
-        }
-    }
-    for row in 0..degree {
-        for offset in 0..degree {
-            matrix[degree - 1 + row][row + offset] = derivative[degree - 1 - offset].clone();
-        }
-    }
-    let mut previous = Integer::from(1);
-    let mut sign = 1_i64;
-    for step in 0..size - 1 {
-        if matrix[step][step].is_zero() {
-            let mut swapped = false;
-            for row in step + 1..size {
-                if !matrix[row][step].is_zero() {
-                    matrix.swap(step, row);
-                    sign = -sign;
-                    swapped = true;
-                    break;
-                }
-            }
-            if !swapped {
-                return Integer::from(0);
-            }
-        }
-        let pivot = matrix[step][step].clone();
-        for row in step + 1..size {
-            for column in step + 1..size {
-                let updated =
-                    &matrix[row][column] * &pivot - &matrix[row][step] * &matrix[step][column];
-                matrix[row][column] = updated / &previous;
-            }
-            matrix[row][step] = Integer::from(0);
-        }
-        previous = pivot;
-    }
-    let resultant = matrix[size - 1][size - 1].clone() * Integer::from(sign);
-    if (degree * (degree - 1) / 2).is_multiple_of(2) {
-        resultant
-    } else {
-        -resultant
-    }
 }
 
 fn mark_general_residue(scores: &mut [u32], max_a: usize, prime: u64, residue: u64, weight: u32) {
@@ -2685,6 +2746,81 @@ mod tests {
         for degree in 3..=5 {
             let polynomial = select_polynomial(&n, degree, 64).expect("polynomial");
             assert!(has_unit_index(&polynomial));
+        }
+    }
+
+    #[test]
+    fn irreducibility_gate_rescues_quartic_hidden_from_small_primes() {
+        let hidden = PolynomialPair {
+            degree: 4,
+            coefficients: vec![
+                Integer::from(105),
+                Integer::from(15),
+                Integer::from(6),
+                Integer::from(9),
+                Integer::from(1),
+            ],
+            m: Integer::from(10),
+        };
+        assert!(is_irreducible_candidate(&hidden));
+    }
+
+    #[test]
+    fn irreducibility_gate_still_rejects_reducible_quartic() {
+        let reducible = PolynomialPair {
+            degree: 4,
+            coefficients: vec![
+                Integer::from(2),
+                Integer::from(0),
+                Integer::from(3),
+                Integer::from(0),
+                Integer::from(1),
+            ],
+            m: Integer::from(10),
+        };
+        assert!(!is_irreducible_candidate(&reducible));
+    }
+
+    #[test]
+    fn irreducibility_gate_rejects_reducible_cubic() {
+        let reducible = PolynomialPair {
+            degree: 3,
+            coefficients: vec![
+                Integer::from(1),
+                Integer::from(1),
+                Integer::from(1),
+                Integer::from(1),
+            ],
+            m: Integer::from(10),
+        };
+        assert!(!is_irreducible_candidate(&reducible));
+    }
+
+    #[test]
+    fn irreducibility_gate_accepts_irreducible_cubic() {
+        let irreducible = PolynomialPair {
+            degree: 3,
+            coefficients: vec![
+                Integer::from(1),
+                Integer::from(1),
+                Integer::from(0),
+                Integer::from(1),
+            ],
+            m: Integer::from(10),
+        };
+        assert!(is_irreducible_candidate(&irreducible));
+    }
+
+    #[test]
+    fn selected_polynomials_are_irreducible_over_rationals() {
+        let n = Integer::from(100160063);
+        for degree in 3..=5 {
+            let polynomial = select_polynomial(&n, degree, 64).expect("polynomial");
+            assert_eq!(polynomial.degree, degree);
+            assert_eq!(polynomial.evaluate(&polynomial.m), n);
+            assert!(is_irreducible_candidate(&polynomial));
+            assert!(has_unit_index(&polynomial));
+            NumberField::new(degree, polynomial.coefficients.clone()).expect("number field");
         }
     }
 
@@ -2849,7 +2985,7 @@ mod tests {
         let root = cubic(&[3, 1, 0]);
         let value = field.multiply(&root, &root);
         let units = find_units(&field, 2, 8);
-        let corrected = unit_corrected_square_root(&field, &value, &units, None, true)
+        let corrected = unit_corrected_square_root(&field, &value, &units, None, None, true)
             .expect("algebraic square root");
         assert_eq!(corrected.power, 0);
         assert_eq!(corrected.unit, Element::one(3));
@@ -2912,5 +3048,107 @@ mod tests {
             vec![expected.clone(), negative]
         );
         assert_eq!(&expected * &expected, squared);
+    }
+
+    fn pure_quintic(constant: i64) -> NumberField {
+        NumberField::new(
+            5,
+            vec![
+                Integer::from(constant),
+                Integer::from(0),
+                Integer::from(0),
+                Integer::from(0),
+                Integer::from(0),
+                Integer::from(1),
+            ],
+        )
+        .expect("quintic field")
+    }
+
+    fn quintic(values: &[i64]) -> Element {
+        Element::from_coefficients(values.iter().copied().map(Integer::from).collect())
+    }
+
+    #[test]
+    fn quintic_unit_search_stays_bounded() {
+        let field = pure_quintic(7);
+        let bound = unit_search_bound(5);
+        assert!((1..=3).contains(&bound));
+        let width = (2 * bound + 1) as u64;
+        assert!(width.pow(5) <= 20_000);
+        let units = find_units(&field, bound, UNIT_SEARCH_LIMIT);
+        assert!(!units.is_empty());
+        assert!(units.len() <= UNIT_SEARCH_LIMIT);
+        for unit in &units {
+            assert!(
+                element_norm(&field, unit)
+                    .is_some_and(|norm| norm.is_one() || norm == Integer::from(-1))
+            );
+        }
+    }
+
+    #[test]
+    fn quintic_unit_correction_succeeds() {
+        let field = pure_quintic(7);
+        let beta = quintic(&[1, 2, 3, 4, 5]);
+        let value = field.multiply(&beta, &beta);
+        let units = find_units(&field, unit_search_bound(5), UNIT_SEARCH_LIMIT);
+        assert!(!units.is_empty());
+        let corrected = unit_corrected_square_root(&field, &value, &units, None, None, true)
+            .expect("quintic square root");
+        assert_eq!(field.multiply(&corrected.root, &corrected.root), value);
+    }
+
+    #[test]
+    fn quintic_unit_correction_recovers_unit_multiple() {
+        let field = pure_quintic(7);
+        let beta = quintic(&[1, 2, 3, 4, 5]);
+        let square = field.multiply(&beta, &beta);
+        let negated: Vec<Integer> = square
+            .coefficients
+            .iter()
+            .map(|value| -value.clone())
+            .collect();
+        let value = Element::from_coefficients(negated);
+        assert!(algebraic_square_root(&field, &value, None, None).is_none());
+        let units = find_units(&field, unit_search_bound(5), UNIT_SEARCH_LIMIT);
+        let minus_one = Element::from_coefficients(vec![
+            Integer::from(-1),
+            Integer::from(0),
+            Integer::from(0),
+            Integer::from(0),
+            Integer::from(0),
+        ]);
+        assert!(units.contains(&minus_one));
+        let corrected = unit_corrected_square_root(&field, &value, &units, None, None, true)
+            .expect("unit corrected quintic root");
+        assert!(corrected.power > 0);
+        let mut expected = value.clone();
+        for _ in 0..corrected.power {
+            expected = field.multiply(&expected, &corrected.unit);
+        }
+        assert_eq!(field.multiply(&corrected.root, &corrected.root), expected);
+        assert_eq!(expected, square);
+    }
+
+    #[test]
+    fn zero_memory_budget_rejects_relation_matrix() {
+        let n = Integer::from(100160063);
+        let options = FactorOptions {
+            max_memory_mb: Some(0),
+            ..FactorOptions::default()
+        };
+        let cancelled = AtomicBool::new(false);
+        let outcome = gnfs_divisor(&n, &options, &cancelled, None);
+        assert!(
+            matches!(outcome, Err(FactorError::ResourceLimit(_))),
+            "zero budget must fail before sieving"
+        );
+    }
+
+    #[test]
+    fn default_memory_budget_covers_small_matrix() {
+        let options = FactorOptions::default();
+        assert!(estimate_relation_matrix_megabytes(600) as u64 <= options.memory_budget_bytes());
     }
 }

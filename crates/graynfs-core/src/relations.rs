@@ -9,13 +9,11 @@ use crate::base::FactorBase;
 use crate::error::FactorError;
 use crate::factor::ProgressEvent;
 use crate::integer::{Integer, IntegerExt, integer_gcd};
-use crate::options::FactorOptions;
+use crate::options::{FactorOptions, estimate_collect_bytes};
 use crate::polynomial::PolynomialPair;
 use crate::prime::is_probable_prime;
 
 const PROGRESS_BATCHES: usize = 8;
-const SIEVE_ARRAY_BUDGET_BYTES: u64 = 1 << 30;
-
 pub(crate) fn sieve_array_bytes(blocks: usize, width: usize) -> u64 {
     blocks as u64 * width as u64 * 9
 }
@@ -99,6 +97,14 @@ where
     let max_b = i64::try_from(options.sieve_b_bound).map_err(|_| {
         FactorError::InvalidInput("sieve b bound exceeds the supported range".to_string())
     })?;
+    let budget = options.memory_budget_bytes();
+    let workers = pass_workers(max_b, options);
+    if estimate_collect_bytes(base.column_count(), max_a, workers) > budget {
+        return Err(FactorError::ResourceLimit(format!(
+            "quadratic sieve arrays would exceed the memory budget of {} MiB",
+            budget.div_ceil(1024 * 1024)
+        )));
+    }
     let rational_cache = build_rational_cache(max_a, base);
     let sieve_roots = build_sieve_roots(polynomial, base);
     let initial_threshold = match base.algebraic_modulus_primes.len() {
@@ -469,10 +475,11 @@ fn collect_b_range(
     let mut partials = Vec::new();
     let root_count = sieve_roots.len();
     let block_count = root_count.div_ceil(64);
-    if sieve_array_bytes(block_count, width) > SIEVE_ARRAY_BUDGET_BYTES {
-        return Err(FactorError::ResourceLimit(
-            "sieve arrays exceed memory budget".to_string(),
-        ));
+    if sieve_array_bytes(block_count, width) > context.options.memory_budget_bytes() {
+        return Err(FactorError::ResourceLimit(format!(
+            "quadratic sieve arrays would exceed the memory budget of {} MiB",
+            context.options.memory_budget_bytes().div_ceil(1024 * 1024)
+        )));
     }
     let mut divisors = vec![0_u64; block_count * width];
     let mut epochs = vec![0_u8; block_count * width];
@@ -830,9 +837,69 @@ mod tests {
 
     #[test]
     fn sieve_budget_rejects_terabyte_layout() {
-        assert!(sieve_array_bytes(339, 1_000_001) > SIEVE_ARRAY_BUDGET_BYTES);
-        assert!(sieve_array_bytes(120, 32_001) < SIEVE_ARRAY_BUDGET_BYTES);
+        let budget = FactorOptions::default().memory_budget_bytes();
+        assert!(sieve_array_bytes(339, 1_000_001) > budget);
+        assert!(sieve_array_bytes(120, 32_001) < budget);
         assert_eq!(sieve_array_bytes(0, 1_000_001), 0);
+    }
+
+    #[test]
+    fn zero_budget_rejects_quadratic_collect() {
+        let n = Integer::from(100160063_u64);
+        let poly_options = FactorOptions {
+            degree: Some(2),
+            ..FactorOptions::default()
+        };
+        let polynomial =
+            crate::polynomial::select_polynomial(&n, &poly_options).expect("polynomial");
+        let base = FactorBase::build(&polynomial, &n, 20, 20).expect("base");
+        let capped = FactorOptions {
+            max_memory_mb: Some(0),
+            sieve_a_bound: 30,
+            sieve_b_bound: 10,
+            ..FactorOptions::default()
+        };
+        let cancelled = AtomicBool::new(false);
+        let mut progress = |_: &ProgressEvent| Ok(());
+        let outcome = collect_relations(
+            &n,
+            &polynomial,
+            &base,
+            &capped,
+            &cancelled,
+            None,
+            &mut progress,
+        );
+        assert!(matches!(outcome, Err(FactorError::ResourceLimit(_))));
+    }
+
+    #[test]
+    fn default_budget_allows_small_quadratic_collect() {
+        let n = Integer::from(100160063_u64);
+        let poly_options = FactorOptions {
+            degree: Some(2),
+            ..FactorOptions::default()
+        };
+        let polynomial =
+            crate::polynomial::select_polynomial(&n, &poly_options).expect("polynomial");
+        let base = FactorBase::build(&polynomial, &n, 20, 20).expect("base");
+        let open = FactorOptions {
+            sieve_a_bound: 30,
+            sieve_b_bound: 10,
+            ..FactorOptions::default()
+        };
+        let cancelled = AtomicBool::new(false);
+        let mut progress = |_: &ProgressEvent| Ok(());
+        let outcome = collect_relations(
+            &n,
+            &polynomial,
+            &base,
+            &open,
+            &cancelled,
+            None,
+            &mut progress,
+        );
+        assert!(!matches!(outcome, Err(FactorError::ResourceLimit(_))));
     }
 
     fn relation_with_mask(word: u64) -> Relation {
