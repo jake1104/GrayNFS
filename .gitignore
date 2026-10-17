@@ -1,0 +1,32 @@
+# Rust build outputs
+/target/
+# Measurement outputs (regenerated locally; contain reference binaries)
+/logs/
+# Local probe scripts, backups, and reports (see AGENTS.md)
+# NOTE: AGENTS.md, todo.md and CHANGELOG.md must never be added here;
+# they stay out of git by manual staging discipline, not by ignore rules.
+/probe/
+# Python virtualenvs, caches, and compiled artifacts
+.venv/
+venv/
+.pytest_cache/
+__pycache__/
+*.py[cod]
+*.egg-info/
+build/
+*.whl
+*.so
+*.pyd
+.coverage
+htmlcov/
+# Maturin / installer leftovers
+dist/
+# Profiling data
+*.profdata
+# Local run logs at the repo root
+*.log
+# Editors and OS droppings
+.vscode/
+.idea/
+.DS_Store
+Thumbs.db

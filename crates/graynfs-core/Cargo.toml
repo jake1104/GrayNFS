@@ -1,0 +1,19 @@
+[package]
+name = "graynfs-core"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+authors.workspace = true
+description = "A high-performance general number field sieve implementation"
+
+[dependencies]
+num-bigint.workspace = true
+num-traits.workspace = true
+thiserror.workspace = true
+rand.workspace = true
+rand_chacha.workspace = true
+smallvec.workspace = true
+hashbrown.workspace = true
+
+[dev-dependencies]
+serde_json.workspace = true

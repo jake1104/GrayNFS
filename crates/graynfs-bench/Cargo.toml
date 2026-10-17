@@ -1,0 +1,19 @@
+[package]
+name = "graynfs-bench"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+authors.workspace = true
+description = "Cross-validation benchmark for GrayNFS"
+
+[[bin]]
+name = "graynfs-bench"
+path = "src/main.rs"
+
+[dependencies]
+graynfs-core = { path = "../graynfs-core" }
+num-bigint.workspace = true
+num-traits.workspace = true
+clap.workspace = true
+serde.workspace = true
+serde_json.workspace = true

@@ -1,0 +1,22 @@
+[package]
+name = "graynfs-cli"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+authors.workspace = true
+description = "Command line interface for GrayNFS"
+
+[[bin]]
+name = "graynfs"
+path = "src/main.rs"
+
+[dependencies]
+graynfs-core = { path = "../graynfs-core" }
+num-bigint.workspace = true
+clap.workspace = true
+serde_json.workspace = true
+mimalloc = { workspace = true, optional = true }
+
+[features]
+default = ["mimalloc"]
+mimalloc = ["dep:mimalloc"]

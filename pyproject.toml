@@ -1,0 +1,22 @@
+[build-system]
+requires = ["maturin>=1.10,<2.0"]
+build-backend = "maturin"
+
+[project]
+name = "graynfs"
+version = "0.1.0"
+description = "High-performance GNFS integer factorization with Python bindings"
+requires-python = ">=3.8"
+classifiers = [
+    "Programming Language :: Rust",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: Implementation :: CPython",
+    "Topic :: Security :: Cryptography",
+]
+dependencies = []
+
+[tool.maturin]
+manifest-path = "crates/graynfs-py/Cargo.toml"
+module-name = "graynfs._graynfs"
+python-source = "python"
+features = ["pyo3/extension-module"]

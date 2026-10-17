@@ -1,0 +1,17 @@
+[package]
+name = "graynfs-py"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+authors.workspace = true
+description = "Python bindings for GrayNFS"
+
+[lib]
+name = "_graynfs"
+crate-type = ["cdylib", "rlib"]
+
+[dependencies]
+graynfs-core = { path = "../graynfs-core" }
+num-bigint.workspace = true
+pyo3.workspace = true
+serde_json.workspace = true
