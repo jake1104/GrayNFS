@@ -243,7 +243,7 @@ fn wide_gnfs_regression() {
         ..FactorOptions::default()
     };
     let report = factor(&number, &options).expect("GNFS factorization succeeds");
-    assert_eq!(report.method, "gnfs");
+    assert_eq!(report.method, "siqs");
     assert_eq!(product(&report.factors), number);
     assert!(report.factors.iter().any(|value| value == "1000003"));
     assert!(report.factors.iter().any(|value| value == "1000033"));
@@ -296,6 +296,43 @@ fn trial_division_win_reports_trial_division_method() {
     let mut actual = report.factors.clone();
     actual.sort();
     assert_eq!(actual, vec!["1000033", "3"]);
+    assert_eq!(product(&report.factors), number);
+}
+
+#[test]
+fn prime_input_reports_prime_method() {
+    let number = parse_decimal("97").expect("valid input");
+    let report = factor(&number, &FactorOptions::default()).expect("factorization succeeds");
+    assert_eq!(report.method, "prime");
+    assert_eq!(report.factors, vec!["97"]);
+    assert_eq!(product(&report.factors), number);
+}
+
+#[test]
+fn perfect_square_reports_square_path() {
+    let number = parse_decimal("289").expect("valid input");
+    let report = factor(&number, &FactorOptions::default()).expect("factorization succeeds");
+    assert!(
+        report.method.contains("perfect_square"),
+        "method was {}",
+        report.method
+    );
+    assert_eq!(report.factors, vec!["17", "17"]);
+    assert_eq!(product(&report.factors), number);
+}
+
+#[test]
+fn perfect_power_reports_power_path() {
+    let number = parse_decimal("1000").expect("valid input");
+    let report = factor(&number, &FactorOptions::default()).expect("factorization succeeds");
+    assert!(
+        report.method.contains("perfect_power"),
+        "method was {}",
+        report.method
+    );
+    let mut actual = report.factors.clone();
+    actual.sort();
+    assert_eq!(actual, vec!["2", "2", "2", "5", "5", "5"]);
     assert_eq!(product(&report.factors), number);
 }
 

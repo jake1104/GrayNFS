@@ -11,7 +11,9 @@ use crate::integer::{Integer, IntegerExt, integer_abs, integer_gcd, integer_sqrt
 use crate::lattice::{ideal_basis, shortest_vector};
 use crate::linear_algebra::{Masked, rank_and_dependencies};
 use crate::number_field::{Element, NumberField, polynomial_discriminant};
-use crate::options::{FactorOptions, estimate_collect_bytes, estimate_total_bytes};
+use crate::options::{
+    FactorOptions, estimate_collect_bytes, estimate_live_bytes, estimate_total_bytes,
+};
 use crate::poly::ModPolynomial;
 use crate::poly::is_irreducible;
 use crate::poly::mod_inverse;
@@ -665,6 +667,15 @@ fn gnfs_divisor_timed(
                 budget_bytes.div_ceil(1024 * 1024)
             )));
         }
+        if let Some(error) = live_budget_exceeded(
+            options,
+            base.column_count(),
+            relations.len(),
+            bank.singles.len(),
+            bank.doubles.len(),
+        ) {
+            return Err(error);
+        }
     }
     let (mut rank, mut dependencies) = {
         let timer = Timer::new(Some(collector), "matrix_rank", Some(degree));
@@ -679,6 +690,15 @@ fn gnfs_divisor_timed(
         value
     };
     if relations.len() <= rank && (!bank.singles.is_empty() || !bank.doubles.is_empty()) {
+        if let Some(error) = live_budget_exceeded(
+            options,
+            base.column_count(),
+            relations.len(),
+            bank.singles.len(),
+            bank.doubles.len(),
+        ) {
+            return Err(error);
+        }
         let drain_started = Instant::now();
         let pre_rows = relations.len();
         let pre_columns = base.column_count();
@@ -719,6 +739,15 @@ fn gnfs_divisor_timed(
                 need_bytes.div_ceil(1024 * 1024),
                 budget_bytes.div_ceil(1024 * 1024)
             )));
+        }
+        if let Some(error) = live_budget_exceeded(
+            options,
+            base.column_count(),
+            relations.len(),
+            bank.singles.len(),
+            bank.doubles.len(),
+        ) {
+            return Err(error);
         }
     }
     if relations.len() <= rank {
@@ -1048,6 +1077,26 @@ fn check_limits(cancelled: &AtomicBool, deadline: Option<Instant>) -> Result<(),
     Ok(())
 }
 
+pub(crate) fn live_budget_exceeded(
+    options: &FactorOptions,
+    columns: usize,
+    relations: usize,
+    singles: usize,
+    doubles: usize,
+) -> Option<FactorError> {
+    let need = estimate_live_bytes(columns, relations, singles, doubles);
+    let budget = options.memory_budget_bytes();
+    if need > budget {
+        Some(FactorError::ResourceLimit(format!(
+            "relation collection exceeded the memory budget of {} MiB (live estimate {} MiB)",
+            budget.div_ceil(1024 * 1024),
+            need.div_ceil(1024 * 1024)
+        )))
+    } else {
+        None
+    }
+}
+
 #[allow(clippy::too_many_arguments)]
 fn collect_relations(
     n: &Integer,
@@ -1112,6 +1161,15 @@ fn collect_relations(
             .iter()
             .filter(|relation| relation.mask.iter().any(|word| *word != 0))
             .count();
+        if let Some(error) = live_budget_exceeded(
+            options,
+            context.base.column_count(),
+            complete.len(),
+            bank.singles.len(),
+            bank.doubles.len(),
+        ) {
+            return Err(error);
+        }
         collector.record_elapsed(
             "collect",
             Some(degree),
@@ -1729,6 +1787,7 @@ fn scan_pass(
                 .collect::<Vec<Result<Vec<RawHit>, FactorError>>>()
         });
         let mut finished = false;
+        let mut since_check = 0_usize;
         for batch in batches {
             for hit in batch? {
                 let before = complete.len();
@@ -1747,6 +1806,19 @@ fn scan_pass(
                         .is_some_and(|relation| relation.mask.iter().any(|word| *word != 0))
                 {
                     usable += 1;
+                }
+                since_check += 1;
+                if since_check >= 256 {
+                    since_check = 0;
+                    if let Some(error) = live_budget_exceeded(
+                        options,
+                        context.base.column_count(),
+                        already_usable + complete.len(),
+                        bank.singles.len(),
+                        bank.doubles.len(),
+                    ) {
+                        return Err(error);
+                    }
                 }
                 if already_usable + usable >= target {
                     finished = true;
@@ -2734,21 +2806,31 @@ fn multiplier_square_roots(
 }
 
 pub(crate) fn integer_root(value: &Integer, degree: usize) -> Integer {
-    let mut guess =
-        Integer::from(1) << (value.bits().div_ceil(u64::try_from(degree).unwrap_or(1)) + 1);
-    loop {
-        let power = integer_pow(&guess, degree);
-        if power > *value {
-            guess >>= 1;
-            continue;
-        }
-        let previous = &power / &guess;
-        let next = (&guess * (degree as u32 - 1) + value / &previous) / Integer::from(degree);
-        if next >= guess {
-            return guess;
-        }
-        guess = next;
+    if degree == 0 {
+        return Integer::from(1);
     }
+    if degree == 1 {
+        return value.clone();
+    }
+    if value <= &Integer::from(0) {
+        return Integer::from(0);
+    }
+    if value <= &Integer::from(1) {
+        return value.clone();
+    }
+    let shift = value.bits().div_ceil(u64::try_from(degree).unwrap_or(1)) + 1;
+    let mut lo = Integer::from(0);
+    let mut hi = Integer::from(1) << shift;
+    let exponent = u32::try_from(degree).unwrap_or(u32::MAX);
+    while &lo + Integer::from(1) < hi {
+        let mid = (&lo + &hi) / Integer::from(2);
+        if mid.pow(exponent) <= *value {
+            lo = mid;
+        } else {
+            hi = mid;
+        }
+    }
+    lo
 }
 
 fn integer_pow(value: &Integer, degree: usize) -> Integer {
@@ -3300,6 +3382,22 @@ mod tests {
     }
 
     #[test]
+    fn zero_memory_budget_rejects_live_estimate() {
+        let options = FactorOptions {
+            max_memory_mb: Some(0),
+            ..FactorOptions::default()
+        };
+        let need = crate::options::estimate_live_bytes(600, 900, 10, 5);
+        assert!(need > 0);
+        let outcome = live_budget_exceeded(&options, 600, 900, 10, 5);
+        assert!(
+            matches!(outcome, Some(FactorError::ResourceLimit(_))),
+            "zero budget must reject a positive live estimate"
+        );
+        assert!(live_budget_exceeded(&FactorOptions::default(), 10, 15, 0, 0).is_none());
+    }
+
+    #[test]
     fn zero_memory_budget_rejects_relation_matrix() {
         let n = Integer::from(100160063);
         let options = FactorOptions {
@@ -3332,6 +3430,67 @@ mod tests {
         let budget = options.memory_budget_bytes();
         assert!(estimate_total_bytes(200_000, 300_000) > budget);
         assert!(estimate_total_bytes(10, 15) <= FactorOptions::default().memory_budget_bytes());
+    }
+
+    #[test]
+    fn integer_root_matches_floor_on_hang_adversaries() {
+        assert_eq!(integer_root(&Integer::from(1000), 3), Integer::from(10));
+        assert_eq!(integer_root(&Integer::from(1330), 3), Integer::from(10));
+        for value in [1000, 1330] {
+            let n = Integer::from(value);
+            let root = integer_root(&n, 3);
+            assert!(root.pow(3) <= n);
+            assert!((&root + Integer::from(1)).pow(3) > n);
+        }
+    }
+
+    #[test]
+    fn integer_root_recovers_large_exact_cubes() {
+        let base = Integer::from(123456789);
+        let cube = base.pow(3);
+        assert_eq!(integer_root(&cube, 3), base);
+        assert!(is_perfect_power(&cube, 3));
+        let wide_base = Integer::from(123456789) << 60_u32;
+        let wide_cube = wide_base.pow(3);
+        assert_eq!(integer_root(&wide_cube, 3), wide_base);
+        assert!(is_perfect_power(&wide_cube, 3));
+    }
+
+    fn factor_style_corrected_root(value: &Integer, exponent: u32) -> Integer {
+        let mut root = integer_root(value, exponent as usize);
+        while root.pow(exponent) > *value {
+            root -= Integer::from(1);
+        }
+        while (&root + Integer::from(1)).pow(exponent) <= *value {
+            root += Integer::from(1);
+        }
+        root
+    }
+
+    #[test]
+    fn integer_root_brackets_two_pow_128_minus_one() {
+        let n = (Integer::from(1) << 128_u32) - Integer::from(1);
+        let root = factor_style_corrected_root(&n, 3);
+        assert!(root.pow(3) <= n);
+        assert!((&root + Integer::from(1)).pow(3) > n);
+        assert!(!is_perfect_power(&n, 3));
+    }
+
+    #[test]
+    fn integer_root_hang_regression_pins_complete() {
+        let wide_base = Integer::from(123456789) << 60_u32;
+        let wide_cube = wide_base.pow(3);
+        assert_eq!(factor_style_corrected_root(&wide_cube, 3), wide_base);
+        let semi = (Integer::from(1) << 64_u32) + Integer::from(13);
+        let other = (Integer::from(1) << 64_u32) + Integer::from(29);
+        let n = &semi * &other;
+        for exponent in [3_u32, 5, 7, 31, 127] {
+            let root = factor_style_corrected_root(&n, exponent);
+            assert!(root.pow(exponent) <= n);
+            assert!((&root + Integer::from(1)).pow(exponent) > n);
+        }
+        assert!(!is_perfect_power(&n, 3));
+        assert!(!is_perfect_power(&n, 5));
     }
 
     #[test]

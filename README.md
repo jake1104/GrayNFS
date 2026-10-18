@@ -1,4 +1,4 @@
-# GrayNFS · [![Version](https://img.shields.io/badge/version-v0.1.2-blue.svg)](CHANGELOG.md) [![License: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE.md) [![CI](https://github.com/jake1104/GrayNFS/actions/workflows/ci.yml/badge.svg)](https://github.com/jake1104/GrayNFS/actions/workflows/ci.yml) [![Python](https://img.shields.io/badge/python-3.8%2B-blue.svg)](python/graynfs/__init__.py)
+# GrayNFS · [![Version](https://img.shields.io/badge/version-v0.1.3-blue.svg)](CHANGELOG.md) [![License: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE.md) [![CI](https://github.com/jake1104/GrayNFS/actions/workflows/ci.yml/badge.svg)](https://github.com/jake1104/GrayNFS/actions/workflows/ci.yml) [![Python](https://img.shields.io/badge/python-3.8%2B-blue.svg)](python/graynfs/__init__.py)
 
 Pure-Rust adaptive integer factorization: a GNFS core with a measured cascade to SIQS, ECM, and classical trial methods.
 
@@ -51,7 +51,7 @@ Prerequisites: a Rust stable toolchain plus a C compiler (the default allocator 
 cargo build -p graynfs-cli --release
 .\target\release\graynfs.exe 1000036000099
 python -m maturin build --release --out dist
-python -m pip install --force-reinstall --no-deps dist\graynfs-0.1.2-cp38-abi3-win_amd64.whl
+python -m pip install --force-reinstall --no-deps dist\graynfs-0.1.3-cp38-abi3-win_amd64.whl
 ```
 
 ## Usage
@@ -78,11 +78,11 @@ import graynfs
 graynfs.factor(100160063)                       # [10007, 10009]
 graynfs.factor(100160063, degree=3)             # [10007, 10009]
 graynfs.is_probable_prime(10007)                # True
-graynfs.version()                               # '0.1.2'
+graynfs.version()                               # '0.1.3'
 graynfs.stage_timings(100160063, degree=3)      # [{'stage': 'fermat', ...}]
 ```
 
-All three outputs above were verified live against the installed 0.1.2 wheel.
+All three outputs above were verified live against the installed 0.1.3 wheel.
 `graynfs.factor` and `graynfs.factor_with_progress` accept `degree: int | None
 = None` (auto-select), `rational_base_bound`, `algebraic_base_bound`,
 `sieve_a_bound`, `sieve_b_bound`, `timeout_seconds` (`None` = no deadline),
@@ -315,7 +315,7 @@ by factor character: smooth `p-1`/`p+1` to Pollard/Williams, close factors to
 Fermat, small factors to Brent Rho and ECM (Montgomery XZ, PRAC chains,
 unrolled REDC, prime-only stage-2 BSGS, 16-thread curves, stage-2 cap 16M),
 balanced mid-size inputs to the siever or the GNFS degree race, leftovers to
-the Rho fallback.
+the Rho fallback. The memory budget is an estimate-based soft guard, not an RSS hard limit.
 
 ## Correctness
 
@@ -324,7 +324,7 @@ cargo test --workspace
 python -m pytest -q python/tests
 ```
 
-Every bench and every run self-checks the product before reporting success.
+Every bench and every run self-checks the product before reporting success, with final factors product-verified under probabilistic primality.
 `graynfs-bench --tier random` generates reproducible semiprimes with a seeded
 SplitMix64 generator and verifies every answer:
 
@@ -352,6 +352,22 @@ evidence only. Opt out explicitly:
 ```powershell
 cargo build -p graynfs-cli --release --no-default-features
 ```
+
+## Release notes (v0.1.3 — 2026-10-18)
+
+0.x carries no compatibility promise.
+
+Breaking changes:
+- `FactorReport.method` gains `prime`, `perfect_square`, and `perfect_power` values on the early-exit paths.
+- Bench `run_id` format is now `{task-id}-{nanos}-{pid}-{seq}` with a per-process monotonic sequence.
+- Bench observations report `verification_failed` instead of `ok` when the product check fails.
+- Perfect-power detection now terminates on large inputs (previously hung above ~80 bits), so large-input runs complete instead of stalling.
+
+Other notes:
+- Mid-collection `ResourceLimit` guard: live memory estimates with checkpoints in the GNFS/SIQS collect loops fail cleanly instead of allocating.
+- Over-budget sieve workers stop early at batch boundaries without contaminating the retry loop.
+- SIQS live-budget deduplication removes one redundant check with no behavior change.
+- CI gates on the version-drift guard plus a separate `gnfs-degrees` release job.
 
 ## Release notes (v0.1.2 — 2026-10-18)
 

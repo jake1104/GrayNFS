@@ -9,7 +9,7 @@ use crate::base::FactorBase;
 use crate::error::FactorError;
 use crate::factor::ProgressEvent;
 use crate::integer::{Integer, IntegerExt, integer_gcd};
-use crate::options::{FactorOptions, estimate_collect_bytes};
+use crate::options::{FactorOptions, estimate_collect_bytes, estimate_live_bytes};
 use crate::polynomial::PolynomialPair;
 use crate::prime::is_probable_prime;
 
@@ -65,6 +65,7 @@ struct PassContext<'a> {
     rational_cache: &'a [Option<Vec<u64>>],
     sieve_roots: &'a [SieveRoot],
     options: &'a FactorOptions,
+    budget_stop: Option<&'a AtomicBool>,
 }
 
 fn pass_workers(rows: i64, options: &FactorOptions) -> usize {
@@ -150,6 +151,7 @@ where
                 rational_cache: &rational_cache,
                 sieve_roots: &sieve_roots,
                 options,
+                budget_stop: None,
             },
             progress,
         )?;
@@ -222,6 +224,15 @@ where
             smooth.extend(output.smooth);
             partials.extend(output.partials);
             start = end;
+            let live_bytes =
+                estimate_live_bytes(context.base.column_count(), smooth.len(), partials.len(), 0);
+            if live_bytes > context.options.memory_budget_bytes() {
+                return Err(FactorError::ResourceLimit(format!(
+                    "relation collection exceeded the memory budget of {} MiB (live estimate {} MiB)",
+                    context.options.memory_budget_bytes().div_ceil(1024 * 1024),
+                    live_bytes.div_ceil(1024 * 1024)
+                )));
+            }
             report(progress, smooth.len() + partials.len(), target)?;
         }
         return Ok(finish_pass(&context, smooth, partials));
@@ -236,6 +247,11 @@ where
         .filter(|&(start, end)| start < end)
         .collect();
     let (sender, receiver) = std::sync::mpsc::channel();
+    let budget_stop = AtomicBool::new(false);
+    let worker_context = PassContext {
+        budget_stop: Some(&budget_stop),
+        ..context
+    };
     let mut smooth: Vec<Relation> = Vec::new();
     let mut partials: Vec<PartialHit> = Vec::new();
     let mut failure: Option<FactorError> = None;
@@ -246,7 +262,8 @@ where
             .map(|&(start, stop)| {
                 let sender = sender.clone();
                 scope.spawn(move || {
-                    let outcome = collect_b_range(start, stop, max_a, width, threshold, &context);
+                    let outcome =
+                        collect_b_range(start, stop, max_a, width, threshold, &worker_context);
                     let found = outcome.as_ref().map(RangeOutput::len).unwrap_or(0);
                     let _ = sender.send(found);
                     outcome
@@ -256,17 +273,30 @@ where
         drop(sender);
         while let Ok(found) = receiver.recv() {
             reported += found;
+            let live_bytes = estimate_live_bytes(context.base.column_count(), reported, 0, 0);
+            if live_bytes > context.options.memory_budget_bytes() {
+                failure.get_or_insert(FactorError::ResourceLimit(format!(
+                    "relation collection exceeded the memory budget of {} MiB (live estimate {} MiB)",
+                    context.options.memory_budget_bytes().div_ceil(1024 * 1024),
+                    live_bytes.div_ceil(1024 * 1024)
+                )));
+                budget_stop.store(true, Ordering::Relaxed);
+                break;
+            }
             if failure.is_none()
                 && let Err(error) = report(progress, reported, target)
             {
                 failure.get_or_insert(error);
+                budget_stop.store(true, Ordering::Relaxed);
             }
         }
         for handle in handles {
             match handle.join() {
                 Ok(Ok(output)) => {
-                    smooth.extend(output.smooth);
-                    partials.extend(output.partials);
+                    if failure.is_none() {
+                        smooth.extend(output.smooth);
+                        partials.extend(output.partials);
+                    }
                 }
                 Ok(Err(error)) => {
                     failure.get_or_insert(error);
@@ -279,6 +309,15 @@ where
     });
     if let Some(error) = failure {
         return Err(error);
+    }
+    let live_bytes =
+        estimate_live_bytes(context.base.column_count(), smooth.len(), partials.len(), 0);
+    if live_bytes > context.options.memory_budget_bytes() {
+        return Err(FactorError::ResourceLimit(format!(
+            "relation collection exceeded the memory budget of {} MiB (live estimate {} MiB)",
+            context.options.memory_budget_bytes().div_ceil(1024 * 1024),
+            live_bytes.div_ceil(1024 * 1024)
+        )));
     }
     Ok(finish_pass(&context, smooth, partials))
 }
@@ -468,6 +507,7 @@ fn collect_b_range(
         rational_cache,
         sieve_roots,
         options,
+        budget_stop,
     } = *context;
     let base_bound = base.algebraic_modulus_primes.last().copied().unwrap_or(1);
     let lp_bound = u64::try_from(options.large_prime_bound).unwrap_or(u64::MAX);
@@ -488,6 +528,9 @@ fn collect_b_range(
     let mut epoch = 1_u8;
     for b in b_start..b_end {
         check_cancelled(cancelled, deadline)?;
+        if budget_stop.is_some_and(|stop| stop.load(Ordering::Relaxed)) {
+            return Err(FactorError::Cancelled);
+        }
         epoch = epoch.wrapping_add(1);
         if epoch == 0 {
             divisors.fill(0);
@@ -870,6 +913,44 @@ mod tests {
             None,
             &mut progress,
         );
+        assert!(matches!(outcome, Err(FactorError::ResourceLimit(_))));
+    }
+
+    #[test]
+    fn zero_budget_aborts_multithread_collect_pass() {
+        let n = Integer::from(100160063_u64);
+        let poly_options = FactorOptions {
+            degree: Some(2),
+            ..FactorOptions::default()
+        };
+        let polynomial =
+            crate::polynomial::select_polynomial(&n, &poly_options).expect("polynomial");
+        let base = FactorBase::build(&polynomial, &n, 20, 20).expect("base");
+        let capped = FactorOptions {
+            max_memory_mb: Some(0),
+            threads: Some(4),
+            sieve_a_bound: 30,
+            sieve_b_bound: 8,
+            ..FactorOptions::default()
+        };
+        let max_a = i64::try_from(capped.sieve_a_bound).expect("a bound");
+        let max_b = i64::try_from(capped.sieve_b_bound).expect("b bound");
+        assert!(pass_workers(max_b, &capped) > 1);
+        let rational_cache = build_rational_cache(max_a, &base);
+        let sieve_roots = build_sieve_roots(&polynomial, &base);
+        let cancelled = AtomicBool::new(false);
+        let context = PassContext {
+            polynomial: &polynomial,
+            base: &base,
+            cancelled: &cancelled,
+            deadline: None,
+            rational_cache: &rational_cache,
+            sieve_roots: &sieve_roots,
+            options: &capped,
+            budget_stop: None,
+        };
+        let mut progress = |_: &ProgressEvent| Ok(());
+        let outcome = collect_pass(max_a, max_b, 0, context, &mut progress);
         assert!(matches!(outcome, Err(FactorError::ResourceLimit(_))));
     }
 

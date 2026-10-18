@@ -24,6 +24,20 @@ pub fn estimate_total_bytes(columns: usize, relations: usize) -> u64 {
         .saturating_add((columns as u64).saturating_mul(8))
 }
 
+pub fn estimate_live_bytes(
+    columns: usize,
+    relations: usize,
+    partial_singles: usize,
+    partial_doubles: usize,
+) -> u64 {
+    let mask_words = columns.div_ceil(64) as u64;
+    let per_partial = mask_words.saturating_mul(8).saturating_add(64);
+    let partial_count =
+        (partial_singles as u64).saturating_add((partial_doubles as u64).saturating_mul(2));
+    estimate_total_bytes(columns, relations)
+        .saturating_add(partial_count.saturating_mul(per_partial))
+}
+
 pub fn estimate_relation_matrix_megabytes(column_count: usize) -> usize {
     let columns = column_count.max(1);
     let rows = (columns.saturating_mul(3) / 2 + 16).max(16);
@@ -205,6 +219,20 @@ mod tests {
         let floor = estimate_rank_bytes(columns, relations)
             .saturating_add((relations as u64).saturating_mul(mask_words.saturating_mul(8)));
         assert!(estimate_total_bytes(columns, relations) >= floor);
+    }
+
+    #[test]
+    fn live_estimate_covers_partials() {
+        let base = estimate_total_bytes(600, 900);
+        assert_eq!(estimate_live_bytes(600, 900, 0, 0), base);
+        assert!(estimate_live_bytes(600, 900, 10, 0) > base);
+        assert!(estimate_live_bytes(600, 900, 0, 5) > base);
+        assert!(estimate_live_bytes(600, 900, 3, 4) > base);
+        assert!(estimate_live_bytes(600, 900, 3, 4) >= estimate_total_bytes(600, 900));
+        assert_eq!(
+            estimate_live_bytes(600, 900, 10, 5),
+            estimate_total_bytes(600, 900).saturating_add(2880)
+        );
     }
 
     #[test]

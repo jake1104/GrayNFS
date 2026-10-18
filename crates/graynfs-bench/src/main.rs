@@ -1,5 +1,6 @@
 use std::fs;
 use std::path::PathBuf;
+use std::sync::atomic::{AtomicU64, Ordering};
 use std::time::{Duration, Instant};
 
 use clap::Parser;
@@ -126,7 +127,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     }
     let archive = BenchArchive {
         task_id: cli.task_id.clone(),
-        run_id: format!("{}-{timestamp_unix_secs}", cli.task_id),
+        run_id: build_run_id(&cli.task_id),
         commit_or_id: cli.task_id.clone(),
         tier: cli.tier.clone(),
         timeout_seconds: cli.timeout_seconds,
@@ -144,6 +145,31 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     fs::write(&cli.output, serde_json::to_vec_pretty(&archive)?)?;
     println!("json: {}", cli.output.display());
     Ok(())
+}
+
+static RUN_ID_SEQ: AtomicU64 = AtomicU64::new(0);
+
+fn build_run_id(task_id: &str) -> String {
+    let nanos_since_epoch = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|elapsed| elapsed.as_nanos())
+        .unwrap_or(0);
+    let seq = RUN_ID_SEQ.fetch_add(1, Ordering::Relaxed);
+    format!(
+        "{}-{}-{}-{}",
+        task_id,
+        nanos_since_epoch,
+        std::process::id(),
+        seq
+    )
+}
+
+fn status_for(verified: bool) -> &'static str {
+    if verified {
+        "ok"
+    } else {
+        "verification_failed"
+    }
 }
 
 fn run_case(case: &Case, timeout_seconds: u64, threads: usize) -> Observation {
@@ -206,6 +232,7 @@ fn run_case(case: &Case, timeout_seconds: u64, threads: usize) -> Observation {
                 parse_decimal_product(&observation.factors).unwrap_or_else(|_| Integer::from(0));
             observation.verified = product == case.value
                 && sorted_strings(&observation.factors) == sorted_strings(&observation.expected);
+            observation.status = status_for(observation.verified).to_string();
         }
         Err(error) => {
             observation.status = "error".to_string();
@@ -472,4 +499,41 @@ fn sorted_strings(values: &[String]) -> Vec<String> {
     let mut result = values.to_vec();
     result.sort();
     result
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn run_id_uniqueness_format() {
+        let first = build_run_id("taskx");
+        let second = build_run_id("taskx");
+        assert_ne!(first, second);
+        let mut seqs = Vec::new();
+        for id in [&first, &second] {
+            assert!(id.starts_with("taskx-"));
+            let rest = &id["taskx-".len()..];
+            let parts: Vec<&str> = rest.split('-').collect();
+            assert_eq!(parts.len(), 3);
+            assert!(parts[0].parse::<u128>().is_ok());
+            assert_eq!(parts[1], std::process::id().to_string());
+            let seq = parts[2].parse::<u64>().expect("seq parses");
+            seqs.push(seq);
+        }
+        assert_eq!(seqs[1], seqs[0] + 1);
+    }
+
+    #[test]
+    fn verification_failed_status() {
+        assert_eq!(status_for(true), "ok");
+        assert_eq!(status_for(false), "verification_failed");
+        let factors = vec!["6".to_string()];
+        let expected = vec!["7".to_string()];
+        let product = parse_decimal_product(&factors).expect("product parses");
+        let verified =
+            product == Integer::from(42) && sorted_strings(&factors) == sorted_strings(&expected);
+        assert!(!verified);
+        assert_eq!(status_for(verified), "verification_failed");
+    }
 }

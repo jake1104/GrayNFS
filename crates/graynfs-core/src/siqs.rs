@@ -9,7 +9,9 @@ use crate::error::FactorError;
 use crate::factor::{ProgressEvent, Timer, TimingCollector};
 use crate::integer::{Integer, IntegerExt, integer_gcd};
 use crate::linear_algebra::rank_and_dependencies;
-use crate::options::{FactorOptions, estimate_collect_bytes, estimate_total_bytes};
+use crate::options::{
+    FactorOptions, estimate_collect_bytes, estimate_live_bytes, estimate_total_bytes,
+};
 use crate::polynomial::PolynomialPair;
 use crate::prime::{is_prime_u64_deterministic, legendre, mod_sqrt, sieve_primes};
 use crate::relations::Relation;
@@ -1784,6 +1786,14 @@ where
                 total: columns as u64,
                 message: "sieving siqs polynomials".to_string(),
             })?;
+            let live_bytes = estimate_live_bytes(columns, relations.len(), 0, 0);
+            if live_bytes > memory_budget {
+                return Err(FactorError::ResourceLimit(format!(
+                    "relation collection exceeded the memory budget of {} MiB (live estimate {} MiB)",
+                    memory_budget.div_ceil(1024 * 1024),
+                    live_bytes.div_ceil(1024 * 1024)
+                )));
+            }
             if relations.len() >= columns {
                 break;
             }

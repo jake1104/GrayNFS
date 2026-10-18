@@ -310,9 +310,13 @@ where
     }
     if crate::prime::is_probable_prime(n) {
         factors.push(n.clone());
+        if outcome.winners.is_empty() {
+            outcome.record("prime");
+        }
         return Ok(());
     }
     if let Some(square_root) = perfect_square(n) {
+        outcome.record("perfect_square");
         let mut square_factors = Vec::new();
         let mut square_outcome = StageOutcome::default();
         let mut square_polynomial = None;
@@ -350,6 +354,7 @@ where
         return Ok(());
     }
     if let Some((base, exponent)) = perfect_power_root(n) {
+        outcome.record("perfect_power");
         let mut power_factors = Vec::new();
         let mut power_outcome = StageOutcome::default();
         let mut power_polynomial = None;
@@ -1457,7 +1462,13 @@ fn perfect_power_root(n: &Integer) -> Option<(Integer, u32)> {
     }
     let mut exponent = 3_u64;
     while exponent <= n.bits() {
-        let root = crate::general::integer_root(n, exponent as usize);
+        let mut root = crate::general::integer_root(n, exponent as usize);
+        while root.pow(exponent as u32) > *n {
+            root -= Integer::from(1);
+        }
+        while (&root + Integer::from(1)).pow(exponent as u32) <= *n {
+            root += Integer::from(1);
+        }
         if root.pow(exponent as u32) == *n {
             return Some((root, exponent as u32));
         }

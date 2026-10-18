@@ -64,6 +64,13 @@ if ($Full) {
   $wheelPath = $wheel.FullName
   Invoke-GateStep "wheel-install" { pip install --force-reinstall --no-deps $wheelPath }
   Invoke-GateStep "pytest" { python -m pytest -q python/tests }
+  Invoke-GateStep "version-guard" { python scripts/check_version.py }
+  $degreesProbe = Get-Command cargo-nextest -ErrorAction SilentlyContinue
+  if ($degreesProbe -ne $null) {
+    Invoke-GateStep "gnfs-degrees" { cargo nextest run --release -p graynfs-core --run-ignored=only -E 'test(cubic_gnfs|quartic_gnfs|wide_gnfs)' }
+  } else {
+    Invoke-GateStep "gnfs-degrees" { cargo test --release -p graynfs-core --test core -- --ignored cubic_gnfs quartic_gnfs wide_gnfs }
+  }
 }
 
 "gate PASS" | Add-Content -Path $summaryFile

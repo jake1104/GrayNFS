@@ -204,6 +204,7 @@ pub fn is_integer_square(value: &Integer) -> bool {
     &root * &root == *value
 }
 
+/// Returns the Miller-Rabin probable-prime verdict at 32 rounds; product checks verify composites but this result itself is not a primality proof.
 pub fn is_probable_prime(value: &Integer) -> bool {
     value >= &Integer::from(2) && value.is_probably_prime(32)
 }

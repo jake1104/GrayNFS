@@ -36,3 +36,17 @@ jobs:
           $wheel = (Get-ChildItem wheels-ci/graynfs-*.whl | Sort-Object LastWriteTime -Descending | Select-Object -First 1).FullName
           pip install --force-reinstall --no-deps $wheel
           python -m pytest -q python/tests
+      - name: version-drift-guard
+        run: python scripts/check_version.py
+  gnfs-degrees-release:
+    runs-on: windows-latest
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: taiki-e/install-action@v2
+        with:
+          tool: nextest
+          fallback: cargo-install
+      - name: gnfs-degrees-release
+        run: cargo nextest run --release -p graynfs-core --run-ignored=only -E 'test(cubic_gnfs|quartic_gnfs|wide_gnfs)'
