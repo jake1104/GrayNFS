@@ -49,4 +49,4 @@ jobs:
           tool: nextest
           fallback: cargo-install
       - name: gnfs-degrees-release
-        run: cargo nextest run --release -p graynfs-core --run-ignored=only -E 'test(cubic_gnfs|quartic_gnfs|wide_gnfs)'
+        run: cargo nextest run --release -p graynfs-core --run-ignored=only -E 'test(cubic_gnfs) + test(quartic_gnfs) + test(wide_gnfs)'

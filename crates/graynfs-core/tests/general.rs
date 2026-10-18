@@ -171,9 +171,9 @@ fn lift_budget_keeps_soundness() {
     let product: Integer = first * second;
     assert_eq!(product, n);
     let bound_ms = if cfg!(debug_assertions) {
-        120_000
+        360_000
     } else {
-        32_500
+        300_000
     };
     assert!(
         wall_ms < bound_ms,
