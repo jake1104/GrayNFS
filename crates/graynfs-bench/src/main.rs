@@ -11,7 +11,7 @@ use serde::Serialize;
 #[command(
     name = "graynfs-bench",
     version,
-    about = "Benchmark GrayNFS across factorization difficulty tiers"
+    about = "Benchmark GrayNFS across factorization difficulty tiers; repro267 archives belong under logs/<task-id>/"
 )]
 struct Cli {
     #[arg(long, default_value = "full")]
@@ -76,10 +76,13 @@ struct Observation {
 #[derive(Clone, Debug, Serialize)]
 struct BenchArchive {
     task_id: String,
+    run_id: String,
+    commit_or_id: String,
     tier: String,
     timeout_seconds: u64,
     threads_requested: Option<usize>,
     threads_effective: usize,
+    repeats_total: usize,
     case_filter: Option<String>,
     random_count: usize,
     random_seed: u64,
@@ -123,10 +126,13 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     }
     let archive = BenchArchive {
         task_id: cli.task_id.clone(),
+        run_id: format!("{}-{timestamp_unix_secs}", cli.task_id),
+        commit_or_id: cli.task_id.clone(),
         tier: cli.tier.clone(),
         timeout_seconds: cli.timeout_seconds,
         threads_requested: cli.threads,
         threads_effective,
+        repeats_total: observations.len(),
         case_filter: cli.case_filter.clone(),
         random_count: cli.random_count,
         random_seed: cli.random_seed,

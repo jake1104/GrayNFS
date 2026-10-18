@@ -21,7 +21,7 @@ jobs:
           fallback: cargo-install
       - name: nextest
         run: cargo nextest run --workspace --all-targets
-      - name: quarantine-105bit-release
+      - name: quarantine-105bit-release-info (non-blocking, does-not-gate-release)
         continue-on-error: true
         run: cargo nextest run --release -p graynfs-core --lib --run-ignored=only -E 'test(factors_105bit)'
       - name: release-build

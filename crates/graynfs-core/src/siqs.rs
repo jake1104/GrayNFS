@@ -9,7 +9,7 @@ use crate::error::FactorError;
 use crate::factor::{ProgressEvent, Timer, TimingCollector};
 use crate::integer::{Integer, IntegerExt, integer_gcd};
 use crate::linear_algebra::rank_and_dependencies;
-use crate::options::{FactorOptions, estimate_collect_bytes, estimate_rank_bytes};
+use crate::options::{FactorOptions, estimate_collect_bytes, estimate_total_bytes};
 use crate::polynomial::PolynomialPair;
 use crate::prime::{is_prime_u64_deterministic, legendre, mod_sqrt, sieve_primes};
 use crate::relations::Relation;
@@ -1000,7 +1000,7 @@ pub(crate) fn siqs_collect_estimate_bytes(columns: usize, half_width: i64, worke
 }
 
 pub(crate) fn siqs_rank_estimate_bytes(columns: usize, relations: usize) -> u64 {
-    estimate_rank_bytes(columns, relations)
+    estimate_total_bytes(columns, relations)
 }
 
 fn resolve_siqs_table(n: &Integer, options: &mut FactorOptions) -> Option<usize> {
@@ -1845,9 +1845,11 @@ where
             };
             continue;
         }
-        if siqs_rank_estimate_bytes(columns, relations.len()) > memory_budget {
+        let need_bytes = siqs_rank_estimate_bytes(columns, relations.len());
+        if need_bytes > memory_budget {
             return Err(FactorError::ResourceLimit(format!(
-                "siqs matrix slabs would exceed the memory budget of {} MiB",
+                "the relation matrix total would need about {} MiB, above the memory budget of {} MiB",
+                need_bytes.div_ceil(1024 * 1024),
                 memory_budget.div_ceil(1024 * 1024)
             )));
         }

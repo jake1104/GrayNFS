@@ -394,6 +394,7 @@ where
     let trial_checked = if !options.skip_preprocessing {
         let (hit, checked) = trial_division(n);
         if let Some(divisor) = hit {
+            outcome.record("trial_division");
             let cofactor = n / &divisor;
             return factor_recursive(
                 &divisor,
@@ -798,8 +799,8 @@ where
             timings,
             &mut signals,
         ) {
-            Ok((divisor, stats)) => {
-                outcome.record("gnfs");
+            Ok((divisor, stats, strategy)) => {
+                outcome.record(strategy);
                 *relation_count += stats.relations;
                 *rank += stats.rank;
                 let polynomial_root = stats.polynomial.m.to_string();
@@ -1001,7 +1002,7 @@ fn run_degree<F>(
     progress: &mut F,
     timings: Option<&TimingCollector>,
     pilot: bool,
-) -> Result<(Integer, GnfsStats), FactorError>
+) -> Result<(Integer, GnfsStats, &'static str), FactorError>
 where
     F: FnMut(&ProgressEvent) -> Result<(), FactorError>,
 {
@@ -1024,6 +1025,7 @@ where
                             relations,
                             rank,
                         },
+                        "gnfs",
                     )),
                     Err(error) => Err(error),
                 }
@@ -1061,7 +1063,7 @@ fn gnfs_divisor<F>(
     progress: &mut F,
     timings: Option<&TimingCollector>,
     signals: &mut crate::cascade::CascadeSignals,
-) -> Result<(Integer, GnfsStats), FactorError>
+) -> Result<(Integer, GnfsStats, &'static str), FactorError>
 where
     F: FnMut(&ProgressEvent) -> Result<(), FactorError>,
 {
@@ -1110,7 +1112,7 @@ where
         );
         let pilot_ms = pilot_start.elapsed().as_millis();
         let pilot_yield = match &outcome {
-            Ok((_, stats)) => Some(stats.relations),
+            Ok((_, stats, _)) => Some(stats.relations),
             Err(FactorError::InsufficientRelations { found, .. }) => Some(*found),
             _ => None,
         };
@@ -1223,7 +1225,7 @@ fn quadratic_divisor<F>(
     progress: &mut F,
     timings: Option<&TimingCollector>,
     pilot: bool,
-) -> Result<(Integer, GnfsStats), FactorError>
+) -> Result<(Integer, GnfsStats, &'static str), FactorError>
 where
     F: FnMut(&ProgressEvent) -> Result<(), FactorError>,
 {
@@ -1247,6 +1249,7 @@ where
                         relations: outcome.relations,
                         rank: outcome.rank,
                     },
+                    "siqs",
                 ));
             }
             Err(err) => {
@@ -1384,6 +1387,7 @@ where
                         relations: relations.len(),
                         rank,
                     },
+                    "quadratic-qs",
                 ));
             }
         }

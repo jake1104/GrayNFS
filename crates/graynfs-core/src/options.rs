@@ -16,11 +16,19 @@ pub fn estimate_rank_bytes(columns: usize, relations: usize) -> u64 {
     columns as u64 * (mask_words + relation_words) * 8
 }
 
+pub fn estimate_total_bytes(columns: usize, relations: usize) -> u64 {
+    let mask_words = columns.div_ceil(64) as u64;
+    let per_relation = mask_words.saturating_mul(8).saturating_add(256);
+    estimate_rank_bytes(columns, relations)
+        .saturating_add((relations as u64).saturating_mul(per_relation))
+        .saturating_add((columns as u64).saturating_mul(8))
+}
+
 pub fn estimate_relation_matrix_megabytes(column_count: usize) -> usize {
-    let columns = column_count.max(1) as u64;
-    let words = columns.div_ceil(64);
-    let rows = (columns * 3 / 2 + 16).max(16);
-    usize::try_from((rows * words * 8 + columns * 8).div_ceil(1024 * 1024)).unwrap_or(usize::MAX)
+    let columns = column_count.max(1);
+    let rows = (columns.saturating_mul(3) / 2 + 16).max(16);
+    let bytes = estimate_total_bytes(columns, rows);
+    usize::try_from(bytes.div_ceil(1024 * 1024)).unwrap_or(usize::MAX)
 }
 
 #[derive(Clone, Debug)]
@@ -167,6 +175,36 @@ mod tests {
         let large_rank = estimate_rank_bytes(1_000, 1_000);
         assert!(large_rank > small_rank);
         assert!(estimate_relation_matrix_megabytes(200_000) > 1_024);
+    }
+
+    #[test]
+    fn relation_matrix_estimate_covers_rank_slabs() {
+        for columns in [600_usize, 2000, 200_000] {
+            let rows = columns * 3 / 2;
+            let rank_bytes = estimate_rank_bytes(columns, rows);
+            let matrix_bytes = estimate_relation_matrix_megabytes(columns) as u64 * 1024 * 1024;
+            assert!(
+                matrix_bytes >= rank_bytes,
+                "columns={columns} rows={rows} matrix={matrix_bytes} rank={rank_bytes}"
+            );
+        }
+    }
+
+    #[test]
+    fn total_bytes_grows_monotonically() {
+        assert!(estimate_total_bytes(600, 900) < estimate_total_bytes(2000, 3000));
+        assert!(estimate_total_bytes(2000, 100) < estimate_total_bytes(2000, 3000));
+        assert!(estimate_total_bytes(2000, 3000) >= estimate_rank_bytes(2000, 3000));
+    }
+
+    #[test]
+    fn large_columns_relation_storage_scales_with_mask_width() {
+        let columns = 200_000_usize;
+        let relations = 300_000_usize;
+        let mask_words = columns.div_ceil(64) as u64;
+        let floor = estimate_rank_bytes(columns, relations)
+            .saturating_add((relations as u64).saturating_mul(mask_words.saturating_mul(8)));
+        assert!(estimate_total_bytes(columns, relations) >= floor);
     }
 
     #[test]

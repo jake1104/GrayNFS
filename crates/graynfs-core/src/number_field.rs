@@ -70,6 +70,8 @@ pub struct NumberField {
 }
 
 impl NumberField {
+    /// Checks degree/length/monic shape only; does not prove irreducibility.
+    /// Callers must pass irreducibility-gated candidates (see general.rs).
     pub fn new(degree: usize, polynomial: Vec<Integer>) -> Option<Self> {
         if degree < 2 || polynomial.len() != degree + 1 {
             return None;

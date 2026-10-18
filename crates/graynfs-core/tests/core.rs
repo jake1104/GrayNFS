@@ -261,12 +261,42 @@ fn siqs_parallel_factors_small_semiprime() {
         ..FactorOptions::default()
     };
     let report = factor(&number, &options).expect("SIQS factorization succeeds");
-    assert_eq!(report.method, "gnfs");
+    assert_eq!(report.method, "siqs");
     let mut actual = report.factors.clone();
     actual.sort();
     assert_eq!(actual, vec!["10007", "10009"]);
     assert_eq!(product(&report.factors), number);
     assert!(report.relations > 0, "sieve path must collect relations");
+}
+
+#[test]
+fn siqs_win_reports_siqs_method() {
+    let number = parse_decimal("100460333").expect("valid input");
+    let options = FactorOptions {
+        degree: Some(2),
+        skip_preprocessing: true,
+        threads: Some(2),
+        max_duration: Some(Duration::from_secs(300)),
+        allow_fallback: false,
+        ..FactorOptions::default()
+    };
+    let report = factor(&number, &options).expect("SIQS factorization succeeds");
+    assert_eq!(report.method, "siqs");
+    let mut actual = report.factors.clone();
+    actual.sort();
+    assert_eq!(actual, vec!["10009", "10037"]);
+    assert_eq!(product(&report.factors), number);
+}
+
+#[test]
+fn trial_division_win_reports_trial_division_method() {
+    let number = parse_decimal("3000099").expect("valid input");
+    let report = factor(&number, &FactorOptions::default()).expect("factorization succeeds");
+    assert_eq!(report.method, "trial_division");
+    let mut actual = report.factors.clone();
+    actual.sort();
+    assert_eq!(actual, vec!["1000033", "3"]);
+    assert_eq!(product(&report.factors), number);
 }
 
 #[test]

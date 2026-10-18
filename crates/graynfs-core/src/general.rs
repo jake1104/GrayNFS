@@ -11,7 +11,7 @@ use crate::integer::{Integer, IntegerExt, integer_abs, integer_gcd, integer_sqrt
 use crate::lattice::{ideal_basis, shortest_vector};
 use crate::linear_algebra::{Masked, rank_and_dependencies};
 use crate::number_field::{Element, NumberField, polynomial_discriminant};
-use crate::options::{FactorOptions, estimate_collect_bytes, estimate_relation_matrix_megabytes};
+use crate::options::{FactorOptions, estimate_collect_bytes, estimate_total_bytes};
 use crate::poly::ModPolynomial;
 use crate::poly::is_irreducible;
 use crate::poly::mod_inverse;
@@ -331,6 +331,16 @@ fn bounded_u64(value: usize) -> u64 {
     u64::try_from(value).unwrap_or(u64::MAX)
 }
 
+fn scan_failure_taxonomy(units_enabled: bool, found: bool) -> &'static str {
+    if found {
+        "found"
+    } else if units_enabled {
+        "unit_correction_failed"
+    } else {
+        "sqrt_failed"
+    }
+}
+
 fn dependency_workers(dep_count: usize, options: &FactorOptions) -> usize {
     let threads = options_thread_count(options);
     threads.min(dep_count).max(1)
@@ -385,9 +395,24 @@ fn scan_dependencies(
     head.extend(tail);
     let order = head;
     let workers = dependency_workers(attempt_count, options);
+    let scan_started = Instant::now();
+    let units_tried = units.len();
     if workers <= 1 {
         for index in &order {
             if deadline.is_some_and(|limit| Instant::now() >= limit) {
+                collector.record_elapsed(
+                    "square_root_scan",
+                    Some(degree),
+                    scan_started.elapsed().as_millis(),
+                    format!(
+                        "attempts={} workers={} units={} units_tried={} slowest_ms=0 found=false outcome={}",
+                        attempt_count,
+                        workers,
+                        units_enabled,
+                        units_tried,
+                        scan_failure_taxonomy(units_enabled, false)
+                    ),
+                );
                 return None;
             }
             let attempt = extract_factor(
@@ -403,9 +428,35 @@ fn scan_dependencies(
                 units_enabled,
             );
             if let Some(divisor) = attempt {
+                collector.record_elapsed(
+                    "square_root_scan",
+                    Some(degree),
+                    scan_started.elapsed().as_millis(),
+                    format!(
+                        "attempts={} workers={} units={} units_tried={} slowest_ms=0 found=true outcome={}",
+                        attempt_count,
+                        workers,
+                        units_enabled,
+                        units_tried,
+                        scan_failure_taxonomy(units_enabled, true)
+                    ),
+                );
                 return Some(divisor);
             }
         }
+        collector.record_elapsed(
+            "square_root_scan",
+            Some(degree),
+            scan_started.elapsed().as_millis(),
+            format!(
+                "attempts={} workers={} units={} units_tried={} slowest_ms=0 found=false outcome={}",
+                attempt_count,
+                workers,
+                units_enabled,
+                units_tried,
+                scan_failure_taxonomy(units_enabled, false)
+            ),
+        );
         return None;
     }
     let found = Mutex::new(None);
@@ -481,12 +532,14 @@ fn scan_dependencies(
         Some(degree),
         total_ms / u128::try_from(workers).unwrap_or(1).max(1),
         format!(
-            "attempts={} workers={} units={} slowest_ms={} found={}",
+            "attempts={} workers={} units={} units_tried={} slowest_ms={} found={} outcome={}",
             entries.len(),
             workers,
             units_enabled,
+            units.len(),
             slowest,
-            found_index.is_some()
+            found_index.is_some(),
+            scan_failure_taxonomy(units_enabled, found_index.is_some())
         ),
     );
     for (index, elapsed_ms) in entries
@@ -563,8 +616,12 @@ fn gnfs_divisor_timed(
             options.large_prime_bound,
         )?;
         timer.finish(format!("columns={}", value.column_count()));
-        let budget_mb = options.memory_budget_bytes().div_ceil(1024 * 1024);
-        let need_mb = estimate_relation_matrix_megabytes(value.column_count());
+        let columns = value.column_count().max(1);
+        let rows = (columns.saturating_mul(3) / 2 + 16).max(16);
+        let need_bytes = estimate_total_bytes(columns, rows);
+        let budget_bytes = options.memory_budget_bytes();
+        let budget_mb = budget_bytes.div_ceil(1024 * 1024);
+        let need_mb = need_bytes.div_ceil(1024 * 1024);
         if need_mb as u64 > budget_mb {
             return Err(FactorError::ResourceLimit(format!(
                 "the relation matrix would need about {need_mb} MiB, above the memory budget of {budget_mb} MiB"
@@ -598,6 +655,17 @@ fn gnfs_divisor_timed(
         ));
         (value, bank)
     };
+    {
+        let need_bytes = estimate_total_bytes(base.column_count(), relations.len());
+        let budget_bytes = options.memory_budget_bytes();
+        if need_bytes > budget_bytes {
+            return Err(FactorError::ResourceLimit(format!(
+                "the relation matrix would need about {} MiB, above the memory budget of {} MiB",
+                need_bytes.div_ceil(1024 * 1024),
+                budget_bytes.div_ceil(1024 * 1024)
+            )));
+        }
+    }
     let (mut rank, mut dependencies) = {
         let timer = Timer::new(Some(collector), "matrix_rank", Some(degree));
         let value = rank_and_dependencies(
@@ -643,8 +711,28 @@ fn gnfs_divisor_timed(
             drain_started.elapsed().as_millis(),
             detail,
         );
+        let need_bytes = estimate_total_bytes(base.column_count(), relations.len());
+        let budget_bytes = options.memory_budget_bytes();
+        if need_bytes > budget_bytes {
+            return Err(FactorError::ResourceLimit(format!(
+                "the relation matrix would need about {} MiB, above the memory budget of {} MiB",
+                need_bytes.div_ceil(1024 * 1024),
+                budget_bytes.div_ceil(1024 * 1024)
+            )));
+        }
     }
     if relations.len() <= rank {
+        collector.record_elapsed(
+            "matrix_rank",
+            Some(degree),
+            0,
+            format!(
+                "rank_deficient relations={} rank={} dependencies={}",
+                relations.len(),
+                rank,
+                dependencies.len()
+            ),
+        );
         return Err(FactorError::InsufficientRelations {
             found: relations.len(),
             required: rank + 1,
@@ -708,10 +796,12 @@ fn gnfs_divisor_timed(
         Some(degree),
         total,
         format!(
-            "failed relations={} rank={} dependencies={}",
+            "failed sqrt_failed unit_correction_failed relations={} rank={} dependencies={} units_tried={} bound={}",
             relations.len(),
             rank,
-            dependencies.len()
+            dependencies.len(),
+            units.as_deref().map_or(0, |value| value.len()),
+            bound
         ),
     );
     Err(FactorError::AlgebraicSquareRootFailed)
@@ -2812,6 +2902,24 @@ mod tests {
     }
 
     #[test]
+    fn number_field_construction_does_not_prove_irreducibility() {
+        let coefficients = vec![
+            Integer::from(2),
+            Integer::from(0),
+            Integer::from(3),
+            Integer::from(0),
+            Integer::from(1),
+        ];
+        assert!(NumberField::new(4, coefficients.clone()).is_some());
+        let candidate = PolynomialPair {
+            degree: 4,
+            coefficients,
+            m: Integer::from(10),
+        };
+        assert!(!is_irreducible_candidate(&candidate));
+    }
+
+    #[test]
     fn selected_polynomials_are_irreducible_over_rationals() {
         let n = Integer::from(100160063);
         for degree in 3..=5 {
@@ -3132,6 +3240,66 @@ mod tests {
     }
 
     #[test]
+    fn quintic_direct_sqrt_fails_but_unit_scan_succeeds() {
+        let field = pure_quintic(7);
+        assert_eq!(unit_search_bound(5), 2);
+        assert_eq!(UNIT_SEARCH_LIMIT, 4);
+        let beta = quintic(&[1, 2, 3, 4, 5]);
+        let square = field.multiply(&beta, &beta);
+        let negated: Vec<Integer> = square
+            .coefficients
+            .iter()
+            .map(|value| -value.clone())
+            .collect();
+        let value = Element::from_coefficients(negated);
+        assert!(algebraic_square_root(&field, &value, None, None).is_none());
+        assert!(unit_corrected_square_root(&field, &value, &[], None, None, false).is_none());
+        let units = find_units(&field, unit_search_bound(5), UNIT_SEARCH_LIMIT);
+        assert!(!units.is_empty());
+        assert!(units.len() <= UNIT_SEARCH_LIMIT);
+        let corrected = unit_corrected_square_root(&field, &value, &units, None, None, true)
+            .expect("unit scan root");
+        assert!(corrected.power > 0);
+        let mut expected = value.clone();
+        for _ in 0..corrected.power {
+            expected = field.multiply(&expected, &corrected.unit);
+        }
+        assert_eq!(field.multiply(&corrected.root, &corrected.root), expected);
+        assert_eq!(expected, square);
+    }
+
+    #[test]
+    fn gnfs_failure_taxonomy_labels_are_distinct() {
+        assert_eq!(scan_failure_taxonomy(false, false), "sqrt_failed");
+        assert_eq!(scan_failure_taxonomy(true, false), "unit_correction_failed");
+        assert_eq!(scan_failure_taxonomy(false, true), "found");
+        assert_eq!(scan_failure_taxonomy(true, true), "found");
+        let labels = [
+            "insufficient_relations",
+            "rank_deficient",
+            "sqrt_failed",
+            "unit_correction_failed",
+        ];
+        let mut sorted = labels.to_vec();
+        sorted.sort();
+        sorted.dedup();
+        assert_eq!(sorted.len(), labels.len());
+        assert_eq!(unit_search_bound(5), 2);
+        let field = pure_quintic(7);
+        let units = find_units(&field, unit_search_bound(5), UNIT_SEARCH_LIMIT);
+        assert!(!units.is_empty());
+        assert!(units.len() <= UNIT_SEARCH_LIMIT);
+        let detail = format!(
+            "units_tried={} bound={} found=false outcome={}",
+            units.len(),
+            unit_search_bound(5),
+            scan_failure_taxonomy(true, false)
+        );
+        assert!(detail.contains("units_tried="));
+        assert!(detail.contains("unit_correction_failed"));
+    }
+
+    #[test]
     fn zero_memory_budget_rejects_relation_matrix() {
         let n = Integer::from(100160063);
         let options = FactorOptions {
@@ -3149,6 +3317,33 @@ mod tests {
     #[test]
     fn default_memory_budget_covers_small_matrix() {
         let options = FactorOptions::default();
-        assert!(estimate_relation_matrix_megabytes(600) as u64 <= options.memory_budget_bytes());
+        assert!(
+            crate::options::estimate_relation_matrix_megabytes(600) as u64
+                <= options.memory_budget_bytes()
+        );
+    }
+
+    #[test]
+    fn total_bytes_estimate_exceeds_tiny_budget() {
+        let options = FactorOptions {
+            max_memory_mb: Some(1),
+            ..FactorOptions::default()
+        };
+        let budget = options.memory_budget_bytes();
+        assert!(estimate_total_bytes(200_000, 300_000) > budget);
+        assert!(estimate_total_bytes(10, 15) <= FactorOptions::default().memory_budget_bytes());
+    }
+
+    #[test]
+    fn total_bytes_estimate_covers_drain_growth() {
+        let tiny = FactorOptions {
+            max_memory_mb: Some(1),
+            ..FactorOptions::default()
+        }
+        .memory_budget_bytes();
+        let ample = FactorOptions::default().memory_budget_bytes();
+        assert!(estimate_total_bytes(200_000, 300_016) > tiny);
+        assert!(estimate_total_bytes(600, 916) <= ample);
+        assert!(estimate_total_bytes(200_000, 300_016) >= estimate_total_bytes(200_000, 300_000));
     }
 }
