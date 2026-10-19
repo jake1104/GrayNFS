@@ -3,6 +3,9 @@ use std::time::Duration;
 pub const DEFAULT_MEMORY_BUDGET_BYTES: u64 = 1 << 30;
 pub const MEMORY_BYTES_PER_COLUMN: u64 = 64;
 pub const MEMORY_BYTES_PER_SIEVE_POSITION: u64 = 68;
+pub const MEASURED_LIVE_RATIO_NUM: u64 = 240;
+pub const MEASURED_LIVE_RATIO_DEN: u64 = 100;
+pub const LIVE_BYTES_COVERAGE: u64 = MEASURED_LIVE_RATIO_NUM.div_ceil(MEASURED_LIVE_RATIO_DEN);
 
 pub fn estimate_collect_bytes(columns: usize, half_width: i64, workers: usize) -> u64 {
     let width = half_width.max(0) as u64 * 2 + 1;
@@ -34,8 +37,14 @@ pub fn estimate_live_bytes(
     let per_partial = mask_words.saturating_mul(8).saturating_add(64);
     let partial_count =
         (partial_singles as u64).saturating_add((partial_doubles as u64).saturating_mul(2));
-    estimate_total_bytes(columns, relations)
-        .saturating_add(partial_count.saturating_mul(per_partial))
+    let rank = estimate_rank_bytes(columns, relations);
+    let bank = estimate_total_bytes(columns, relations).saturating_sub(rank);
+    rank.saturating_add(bank.saturating_mul(LIVE_BYTES_COVERAGE))
+        .saturating_add(
+            partial_count
+                .saturating_mul(per_partial)
+                .saturating_mul(LIVE_BYTES_COVERAGE),
+        )
 }
 
 pub fn estimate_relation_matrix_megabytes(column_count: usize) -> usize {
@@ -223,16 +232,47 @@ mod tests {
 
     #[test]
     fn live_estimate_covers_partials() {
-        let base = estimate_total_bytes(600, 900);
+        let rank = estimate_rank_bytes(600, 900);
+        let bank = estimate_total_bytes(600, 900).saturating_sub(rank);
+        let base = rank.saturating_add(bank.saturating_mul(LIVE_BYTES_COVERAGE));
         assert_eq!(estimate_live_bytes(600, 900, 0, 0), base);
         assert!(estimate_live_bytes(600, 900, 10, 0) > base);
         assert!(estimate_live_bytes(600, 900, 0, 5) > base);
         assert!(estimate_live_bytes(600, 900, 3, 4) > base);
-        assert!(estimate_live_bytes(600, 900, 3, 4) >= estimate_total_bytes(600, 900));
+        assert!(estimate_live_bytes(600, 900, 3, 4) >= base);
         assert_eq!(
             estimate_live_bytes(600, 900, 10, 5),
-            estimate_total_bytes(600, 900).saturating_add(2880)
+            base.saturating_add(2880u64.saturating_mul(LIVE_BYTES_COVERAGE))
         );
+    }
+
+    #[test]
+    fn live_estimate_covers_measured_quintic_bank_2026_10_19_1_2() {
+        assert!(estimate_live_bytes(607, 926, 0, 0) >= 518_560);
+    }
+
+    #[test]
+    fn live_estimate_covers_measured_partial_bank_2026_10_19_1_2() {
+        assert!(estimate_live_bytes(607, 0, 600, 200) >= 376_000);
+    }
+
+    #[test]
+    fn live_estimate_stays_below_default_budget_at_corpus_scale() {
+        assert!(
+            estimate_live_bytes(2027, 3056, 600, 200)
+                <= FactorOptions::default().memory_budget_bytes()
+        );
+    }
+
+    #[test]
+    fn live_estimate_scopes_coverage_off_rank_term_2026_10_19_1_2() {
+        let columns = 200_000_usize;
+        let relations = 300_016_usize;
+        let rank = estimate_rank_bytes(columns, relations);
+        let bank = estimate_total_bytes(columns, relations).saturating_sub(rank);
+        let scoped = rank.saturating_add(bank.saturating_mul(LIVE_BYTES_COVERAGE));
+        assert_eq!(estimate_live_bytes(columns, relations, 0, 0), scoped);
+        assert!(scoped > FactorOptions::default().memory_budget_bytes());
     }
 
     #[test]

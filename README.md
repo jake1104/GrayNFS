@@ -1,4 +1,4 @@
-# GrayNFS · [![Version](https://img.shields.io/badge/version-v0.1.3-blue.svg)](CHANGELOG.md) [![License: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE.md) [![CI](https://github.com/jake1104/GrayNFS/actions/workflows/ci.yml/badge.svg)](https://github.com/jake1104/GrayNFS/actions/workflows/ci.yml) [![Python](https://img.shields.io/badge/python-3.8%2B-blue.svg)](python/graynfs/__init__.py)
+# GrayNFS · [![Version](https://img.shields.io/badge/version-v0.1.4-blue.svg)](CHANGELOG.md) [![License: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE.md) [![CI](https://github.com/jake1104/GrayNFS/actions/workflows/ci.yml/badge.svg)](https://github.com/jake1104/GrayNFS/actions/workflows/ci.yml) [![Python](https://img.shields.io/badge/python-3.8%2B-blue.svg)](python/graynfs/__init__.py)
 
 Pure-Rust adaptive integer factorization: a GNFS core with a measured cascade to SIQS, ECM, and classical trial methods.
 
@@ -51,7 +51,7 @@ Prerequisites: a Rust stable toolchain plus a C compiler (the default allocator 
 cargo build -p graynfs-cli --release
 .\target\release\graynfs.exe 1000036000099
 python -m maturin build --release --out dist
-python -m pip install --force-reinstall --no-deps dist\graynfs-0.1.3-cp38-abi3-win_amd64.whl
+python -m pip install --force-reinstall --no-deps dist\graynfs-0.1.4-cp38-abi3-win_amd64.whl
 ```
 
 ## Usage
@@ -77,12 +77,14 @@ import graynfs
 
 graynfs.factor(100160063)                       # [10007, 10009]
 graynfs.factor(100160063, degree=3)             # [10007, 10009]
+graynfs.factor_report(100160063)["factors"]     # [10007, 10009]
+graynfs.factor_report(100160063)["method"]      # 'fermat'
 graynfs.is_probable_prime(10007)                # True
-graynfs.version()                               # '0.1.3'
+graynfs.version()                               # '0.1.4'
 graynfs.stage_timings(100160063, degree=3)      # [{'stage': 'fermat', ...}]
 ```
 
-All three outputs above were verified live against the installed 0.1.3 wheel.
+All outputs above were verified live against the installed 0.1.4 wheel.
 `graynfs.factor` and `graynfs.factor_with_progress` accept `degree: int | None
 = None` (auto-select), `rational_base_bound`, `algebraic_base_bound`,
 `sieve_a_bound`, `sieve_b_bound`, `timeout_seconds` (`None` = no deadline),
@@ -94,8 +96,12 @@ False` marks timing records without changing behavior. Factors return in
 ascending order. `factor_with_progress(n, callback, ...)` calls `callback`
 with `{stage, current, total, message}` per stage boundary; a non-callable
 callback raises `TypeError`. `stage_timings(n, *, ...)` returns `[{stage,
-degree, elapsed_ms, detail}]`. Errors surface as `ValueError` with the CLI
-category text (`resource-limit: ...`); bad types raise `TypeError`. The Rust
+degree, elapsed_ms, detail}]`. `factor_report(n, *, ...)` runs one call and
+returns `{factors, method, degree, relations, rank, elapsed_ms, timings}`.
+Failures raise `GrayNFSError` (a `ValueError`) with `.category` (`input`,
+`resource-limit`, `cancelled`, `internal`) and byte-identical text, e.g.
+`factor(0)` gives `category='input'`, a timed-out run gives
+`category='resource-limit'`; bad types raise `TypeError`. The Rust
 computation releases the Python GIL, so concurrent `factor` calls overlap.
 
 ### Full CLI flag table
@@ -352,6 +358,23 @@ evidence only. Opt out explicitly:
 ```powershell
 cargo build -p graynfs-cli --release --no-default-features
 ```
+
+## Release notes (v0.1.4 — 2026-10-19)
+
+0.x carries no compatibility promise.
+
+Behavior-preserving release: no factorization logic changes except report-only
+additions; all benchmark cells unchanged.
+
+- Lift-tail decomposition verdict: the slow path is a difficult path, not scheduling luck; the square-root bound is unchanged.
+- Scoped memory estimator: rank-excluded coverage 3x (240/100), soft guard unchanged, no caller changes.
+- Quintic forced-path regression test pinned plus the 4-term degrees filter; no production change.
+- Bench provenance: `commit_sha` from `GITHUB_SHA`/`GRAYNFS_COMMIT` (else None) with whitespace trim; `run_id` and `commit_or_id` unchanged.
+- Quarantine stays non-blocking (`continue-on-error: true`); blocking conversion declined for lack of numeric grounds.
+- CLI help completion for every flag (`--no-squfof` hidden, parser unchanged) plus the skip-preprocessing help correction.
+- `--progress` flag streams stage progress to stderr (default off); `--json` stdout stays pure.
+- `factor_report()` single-call dict API (`factors`, `method`, `degree`, `relations`, `rank`, `elapsed_ms`, `timings`); the existing three functions are unchanged.
+- Report-only additions: `GrayNFSError(ValueError)` with `.category` (message byte-identical), pyi `max_memory_mb` sync, sqrt-scan `tried=`/`winner_order=` keys (append-only), timings-row dedup helper.
 
 ## Release notes (v0.1.3 — 2026-10-18)
 

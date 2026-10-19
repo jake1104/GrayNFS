@@ -79,6 +79,7 @@ struct BenchArchive {
     task_id: String,
     run_id: String,
     commit_or_id: String,
+    commit_sha: Option<String>,
     tier: String,
     timeout_seconds: u64,
     threads_requested: Option<usize>,
@@ -129,6 +130,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         task_id: cli.task_id.clone(),
         run_id: build_run_id(&cli.task_id),
         commit_or_id: cli.task_id.clone(),
+        commit_sha: resolve_commit_sha(),
         tier: cli.tier.clone(),
         timeout_seconds: cli.timeout_seconds,
         threads_requested: cli.threads,
@@ -170,6 +172,16 @@ fn status_for(verified: bool) -> &'static str {
     } else {
         "verification_failed"
     }
+}
+
+fn resolve_commit_sha() -> Option<String> {
+    for key in ["GITHUB_SHA", "GRAYNFS_COMMIT"] {
+        match std::env::var(key) {
+            Ok(value) if !value.trim().is_empty() => return Some(value.trim().to_string()),
+            _ => continue,
+        }
+    }
+    None
 }
 
 fn run_case(case: &Case, timeout_seconds: u64, threads: usize) -> Observation {
@@ -504,6 +516,22 @@ fn sorted_strings(values: &[String]) -> Vec<String> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::sync::Mutex;
+
+    static ENV_LOCK: Mutex<()> = Mutex::new(());
+
+    fn saved_env(key: &str) -> Option<String> {
+        std::env::var(key).ok()
+    }
+
+    fn restore_env(key: &str, saved: Option<String>) {
+        unsafe {
+            match saved {
+                Some(value) => std::env::set_var(key, value),
+                None => std::env::remove_var(key),
+            }
+        }
+    }
 
     #[test]
     fn run_id_uniqueness_format() {
@@ -535,5 +563,67 @@ mod tests {
             product == Integer::from(42) && sorted_strings(&factors) == sorted_strings(&expected);
         assert!(!verified);
         assert_eq!(status_for(verified), "verification_failed");
+    }
+
+    #[test]
+    fn commit_sha_injected_from_env() {
+        let _guard = ENV_LOCK.lock().expect("env lock poisons");
+        let saved_github = saved_env("GITHUB_SHA");
+        let saved_gray = saved_env("GRAYNFS_COMMIT");
+        unsafe {
+            std::env::remove_var("GITHUB_SHA");
+        }
+        unsafe {
+            std::env::set_var("GRAYNFS_COMMIT", "abc123def456");
+        }
+        let resolved = resolve_commit_sha();
+        assert_eq!(resolved, Some("abc123def456".to_string()));
+        restore_env("GITHUB_SHA", saved_github);
+        restore_env("GRAYNFS_COMMIT", saved_gray);
+    }
+
+    #[test]
+    fn commit_sha_absent_without_env() {
+        let _guard = ENV_LOCK.lock().expect("env lock poisons");
+        let saved_github = saved_env("GITHUB_SHA");
+        let saved_gray = saved_env("GRAYNFS_COMMIT");
+        unsafe {
+            std::env::remove_var("GITHUB_SHA");
+            std::env::remove_var("GRAYNFS_COMMIT");
+        }
+        let resolved = resolve_commit_sha();
+        assert_eq!(resolved, None);
+        restore_env("GITHUB_SHA", saved_github);
+        restore_env("GRAYNFS_COMMIT", saved_gray);
+    }
+
+    #[test]
+    fn commit_sha_trims_whitespace_and_prefers_github() {
+        let _guard = ENV_LOCK.lock().expect("env lock poisons");
+        let saved_github = saved_env("GITHUB_SHA");
+        let saved_gray = saved_env("GRAYNFS_COMMIT");
+        unsafe {
+            std::env::set_var("GITHUB_SHA", "  abc123  ");
+            std::env::set_var("GRAYNFS_COMMIT", "  xyz  ");
+        }
+        let resolved = resolve_commit_sha();
+        assert_eq!(resolved, Some("abc123".to_string()));
+        restore_env("GITHUB_SHA", saved_github);
+        restore_env("GRAYNFS_COMMIT", saved_gray);
+    }
+
+    #[test]
+    fn commit_sha_skips_empty_github_sha() {
+        let _guard = ENV_LOCK.lock().expect("env lock poisons");
+        let saved_github = saved_env("GITHUB_SHA");
+        let saved_gray = saved_env("GRAYNFS_COMMIT");
+        unsafe {
+            std::env::set_var("GITHUB_SHA", "");
+            std::env::set_var("GRAYNFS_COMMIT", "  xyz  ");
+        }
+        let resolved = resolve_commit_sha();
+        assert_eq!(resolved, Some("xyz".to_string()));
+        restore_env("GITHUB_SHA", saved_github);
+        restore_env("GRAYNFS_COMMIT", saved_gray);
     }
 }

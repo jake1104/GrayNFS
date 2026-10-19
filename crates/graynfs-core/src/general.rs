@@ -400,23 +400,26 @@ fn scan_dependencies(
     let scan_started = Instant::now();
     let units_tried = units.len();
     if workers <= 1 {
-        for index in &order {
+        let mut tried = 0usize;
+        for (position, index) in order.iter().enumerate() {
             if deadline.is_some_and(|limit| Instant::now() >= limit) {
                 collector.record_elapsed(
                     "square_root_scan",
                     Some(degree),
                     scan_started.elapsed().as_millis(),
                     format!(
-                        "attempts={} workers={} units={} units_tried={} slowest_ms=0 found=false outcome={}",
+                        "attempts={} workers={} units={} units_tried={} slowest_ms=0 found=false outcome={} tried={}",
                         attempt_count,
                         workers,
                         units_enabled,
                         units_tried,
-                        scan_failure_taxonomy(units_enabled, false)
+                        scan_failure_taxonomy(units_enabled, false),
+                        tried
                     ),
                 );
                 return None;
             }
+            tried += 1;
             let attempt = extract_factor(
                 n,
                 field,
@@ -435,12 +438,14 @@ fn scan_dependencies(
                     Some(degree),
                     scan_started.elapsed().as_millis(),
                     format!(
-                        "attempts={} workers={} units={} units_tried={} slowest_ms=0 found=true outcome={}",
+                        "attempts={} workers={} units={} units_tried={} slowest_ms=0 found=true outcome={} tried={} winner_order={}",
                         attempt_count,
                         workers,
                         units_enabled,
                         units_tried,
-                        scan_failure_taxonomy(units_enabled, true)
+                        scan_failure_taxonomy(units_enabled, true),
+                        tried,
+                        position
                     ),
                 );
                 return Some(divisor);
@@ -451,12 +456,13 @@ fn scan_dependencies(
             Some(degree),
             scan_started.elapsed().as_millis(),
             format!(
-                "attempts={} workers={} units={} units_tried={} slowest_ms=0 found=false outcome={}",
+                "attempts={} workers={} units={} units_tried={} slowest_ms=0 found=false outcome={} tried={}",
                 attempt_count,
                 workers,
                 units_enabled,
                 units_tried,
-                scan_failure_taxonomy(units_enabled, false)
+                scan_failure_taxonomy(units_enabled, false),
+                tried
             ),
         );
         return None;
@@ -3504,5 +3510,139 @@ mod tests {
         assert!(estimate_total_bytes(200_000, 300_016) > tiny);
         assert!(estimate_total_bytes(600, 916) <= ample);
         assert!(estimate_total_bytes(200_000, 300_016) >= estimate_total_bytes(200_000, 300_000));
+    }
+
+    fn single_worker_scan_harness() -> (Integer, NumberField, Integer, GeneralBase) {
+        let n = Integer::from(15);
+        let coefficients = vec![
+            Integer::from(1),
+            Integer::from(0),
+            Integer::from(0),
+            Integer::from(1),
+        ];
+        let field = NumberField::new(3, coefficients.clone()).expect("monic cubic field");
+        let polynomial = PolynomialPair {
+            degree: 3,
+            coefficients,
+            m: Integer::from(0),
+        };
+        let base = GeneralBase::build(&polynomial, &n, 32, 32, 1_000).expect("synthetic base");
+        (n, field, Integer::from(0), base)
+    }
+
+    fn scan_relation(rational: i32, constant: i32, words: usize) -> GeneralRelation {
+        GeneralRelation {
+            rational_value: Integer::from(rational),
+            algebraic_value: Element::from_coefficients(vec![
+                Integer::from(constant),
+                Integer::from(0),
+                Integer::from(0),
+            ]),
+            mask: vec![0u64; words],
+            large_prime: None,
+            double_edge: None,
+        }
+    }
+
+    fn scan_detail_for(
+        field: &NumberField,
+        point: &Integer,
+        relations: &[GeneralRelation],
+        dependencies: &[Vec<usize>],
+        base: &GeneralBase,
+        deadline: Option<Instant>,
+    ) -> (Option<Integer>, String) {
+        let n = Integer::from(15);
+        let options = FactorOptions {
+            threads: Some(1),
+            ..FactorOptions::default()
+        };
+        let collector = TimingCollector::default();
+        let divisor = scan_dependencies(
+            &n,
+            field,
+            point,
+            relations,
+            dependencies,
+            &[],
+            base,
+            deadline,
+            false,
+            8,
+            &collector,
+            3,
+            &options,
+        );
+        let detail = collector
+            .snapshot()
+            .into_iter()
+            .find(|timing| timing.stage == "square_root_scan")
+            .expect("single-worker scan records square_root_scan")
+            .detail;
+        (divisor, detail)
+    }
+
+    #[test]
+    fn single_worker_scan_reports_tried_on_exhaustion() {
+        let (_, field, point, base) = single_worker_scan_harness();
+        let words = base.mask_words();
+        let relations = vec![
+            scan_relation(2, 1, words),
+            scan_relation(3, 1, words),
+            scan_relation(5, 1, words),
+        ];
+        let dependencies = vec![vec![0usize], vec![1], vec![2]];
+        let (divisor, detail) =
+            scan_detail_for(&field, &point, &relations, &dependencies, &base, None);
+        assert!(divisor.is_none());
+        assert!(detail.contains("attempts=3"));
+        assert!(detail.contains("workers=1"));
+        assert!(detail.contains("found=false"));
+        assert!(detail.contains("tried=3"));
+        assert!(!detail.contains("winner_order="));
+    }
+
+    #[test]
+    fn single_worker_scan_reports_winner_order_on_first_hit() {
+        let (_, field, point, base) = single_worker_scan_harness();
+        let words = base.mask_words();
+        let relations = vec![scan_relation(4, 49, words), scan_relation(3, 1, words)];
+        let dependencies = vec![vec![0usize], vec![1]];
+        let (divisor, detail) =
+            scan_detail_for(&field, &point, &relations, &dependencies, &base, None);
+        assert_eq!(divisor, Some(Integer::from(5)));
+        assert!(detail.contains("attempts=2"));
+        assert!(detail.contains("found=true"));
+        assert!(detail.contains("tried=1"));
+        assert!(detail.contains("winner_order=0"));
+    }
+
+    #[test]
+    fn single_worker_scan_winner_order_tracks_scan_position() {
+        let (_, field, point, base) = single_worker_scan_harness();
+        let words = base.mask_words();
+        let relations = vec![scan_relation(3, 1, words), scan_relation(4, 49, words)];
+        let dependencies = vec![vec![0usize], vec![1]];
+        let (divisor, detail) =
+            scan_detail_for(&field, &point, &relations, &dependencies, &base, None);
+        assert_eq!(divisor, Some(Integer::from(5)));
+        assert!(detail.contains("found=true"));
+        assert!(detail.contains("tried=2"));
+        assert!(detail.contains("winner_order=1"));
+    }
+
+    #[test]
+    fn single_worker_scan_reports_zero_tried_on_deadline() {
+        let (_, field, point, base) = single_worker_scan_harness();
+        let words = base.mask_words();
+        let relations = vec![scan_relation(4, 49, words)];
+        let dependencies = vec![vec![0usize]];
+        let past = Instant::now();
+        let (divisor, detail) =
+            scan_detail_for(&field, &point, &relations, &dependencies, &base, Some(past));
+        assert!(divisor.is_none());
+        assert!(detail.contains("found=false"));
+        assert!(detail.contains("tried=0"));
+        assert!(!detail.contains("winner_order="));
     }
 }

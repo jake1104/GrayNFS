@@ -229,6 +229,28 @@ fn quartic_gnfs_factors_semiprime() {
 }
 
 #[test]
+#[ignore = "requires release profile"]
+fn quintic_gnfs_factors_semiprime() {
+    let number = parse_decimal("100160063").expect("valid input");
+    let options = FactorOptions {
+        degree: Some(5),
+        rational_base_bound: 2_500,
+        algebraic_base_bound: 2_500,
+        sieve_a_bound: 8_000,
+        sieve_b_bound: 2_000,
+        max_duration: Some(Duration::from_secs(1_200)),
+        allow_fallback: false,
+        skip_preprocessing: true,
+        ..FactorOptions::default()
+    };
+    let report = factor(&number, &options).expect("quintic GNFS factorization succeeds");
+    assert_eq!(report.method, "gnfs");
+    assert_eq!(product(&report.factors), number);
+    assert!(report.factors.iter().any(|value| value == "10007"));
+    assert!(report.factors.iter().any(|value| value == "10009"));
+}
+
+#[test]
 #[ignore = "wide GNFS benchmark"]
 fn wide_gnfs_regression() {
     let number = parse_decimal("1000036000099").expect("valid input");

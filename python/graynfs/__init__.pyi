@@ -2,6 +2,11 @@ from typing import Any, Callable
 
 ProgressCallback = Callable[[dict[str, Any]], None]
 
+class GrayNFSError(ValueError):
+    category: str
+    detail: str
+    def __init__(self, category: str, detail: str) -> None: ...
+
 def factor(
     n: int,
     *,
@@ -11,6 +16,7 @@ def factor(
     sieve_a_bound: int = ...,
     sieve_b_bound: int = ...,
     timeout_seconds: int | None = ...,
+    max_memory_mb: int | None = ...,
     allow_fallback: bool = ...,
     use_fermat: bool = ...,
     use_squfof: bool = ...,
@@ -31,6 +37,7 @@ def factor_with_progress(
     sieve_a_bound: int = ...,
     sieve_b_bound: int = ...,
     timeout_seconds: int | None = ...,
+    max_memory_mb: int | None = ...,
     allow_fallback: bool = ...,
     use_fermat: bool = ...,
     use_squfof: bool = ...,
@@ -50,6 +57,7 @@ def stage_timings(
     sieve_a_bound: int = ...,
     sieve_b_bound: int = ...,
     timeout_seconds: int | None = ...,
+    max_memory_mb: int | None = ...,
     allow_fallback: bool = ...,
     use_fermat: bool = ...,
     use_squfof: bool = ...,
@@ -61,4 +69,24 @@ def stage_timings(
     perf_mode: bool = ...,
 ) -> list[dict[str, Any]]: ...
 def is_probable_prime(n: int) -> bool: ...
+def factor_report(
+    n: int,
+    *,
+    degree: int | None = ...,
+    rational_base_bound: int = ...,
+    algebraic_base_bound: int = ...,
+    sieve_a_bound: int = ...,
+    sieve_b_bound: int = ...,
+    timeout_seconds: int | None = ...,
+    max_memory_mb: int | None = ...,
+    allow_fallback: bool = ...,
+    use_fermat: bool = ...,
+    use_squfof: bool = ...,
+    use_pm1: bool = ...,
+    use_pp1: bool = ...,
+    use_ecm: bool = ...,
+    use_mpqs: bool = ...,
+    threads: int | None = ...,
+    perf_mode: bool = ...,
+) -> dict[str, Any]: ...
 def version() -> str: ...

@@ -1,6 +1,7 @@
 use clap::Parser;
 use graynfs_core::{
-    FactorError, FactorOptions, FactorReport, StageTiming, factor_with_timings, parse_decimal,
+    FactorError, FactorOptions, FactorReport, ProgressEvent, StageTiming, factor_with_timings,
+    parse_decimal,
 };
 use std::process::ExitCode;
 
@@ -17,26 +18,45 @@ struct Cli {
         help = "Force a fixed polynomial degree instead of the automatic race"
     )]
     degree: Option<usize>,
-    #[arg(long, default_value_t = 2_000)]
+    #[arg(
+        long,
+        default_value_t = 2_000,
+        help = "Bound of the rational factor base"
+    )]
     rational_base_bound: usize,
-    #[arg(long, default_value_t = 2_000)]
+    #[arg(
+        long,
+        default_value_t = 2_000,
+        help = "Bound of the algebraic factor base"
+    )]
     algebraic_base_bound: usize,
-    #[arg(long, default_value_t = 700)]
+    #[arg(long, default_value_t = 700, help = "Sieve bound on a")]
     sieve_a_bound: usize,
-    #[arg(long, default_value_t = 120)]
+    #[arg(long, default_value_t = 120, help = "Sieve bound on b")]
     sieve_b_bound: usize,
-    #[arg(long, default_value_t = 50_000)]
+    #[arg(
+        long,
+        default_value_t = 50_000,
+        help = "Upper bound of a residual large prime"
+    )]
     large_prime_bound: usize,
-    #[arg(long, default_value_t = 60)]
+    #[arg(
+        long,
+        default_value_t = 60,
+        help = "Overall budget in seconds; on expiry the run ends with a clean ResourceLimit"
+    )]
     timeout_seconds: u64,
     #[arg(
         long,
         help = "Cap estimated sieve and matrix memory in MiB before allocating (default 1024)"
     )]
     max_memory_mb: Option<usize>,
-    #[arg(long)]
+    #[arg(long, help = "Disable the Pollard-Rho fallback")]
     no_fallback: bool,
-    #[arg(long)]
+    #[arg(
+        long,
+        help = "Skip trial division and the Fermat/p-1/p+1/ECM probes (square/power checks still run)"
+    )]
     skip_preprocessing: bool,
     #[arg(long, help = "Print a per-stage timing breakdown")]
     timings: bool,
@@ -45,17 +65,20 @@ struct Cli {
         help = "Allow the general siever to keep relations with two or three large primes and pair them cyclically"
     )]
     double_large_primes: bool,
-    #[arg(long)]
+    #[arg(long, help = "Skip the Fermat close-factor probe")]
     no_fermat: bool,
-    #[arg(long)]
+    #[arg(long, hide = true)]
     no_squfof: bool,
-    #[arg(long)]
+    #[arg(long, help = "Skip Pollard p-1")]
     no_pm1: bool,
-    #[arg(long)]
+    #[arg(long, help = "Skip Williams p+1")]
     no_pp1: bool,
-    #[arg(long)]
+    #[arg(long, help = "Skip Lenstra ECM")]
     no_ecm: bool,
-    #[arg(long)]
+    #[arg(
+        long,
+        help = "Route degree 2 to the classic single-polynomial QS path instead of SIQS"
+    )]
     no_mpqs: bool,
     #[arg(
         long,
@@ -69,6 +92,8 @@ struct Cli {
     perf_mode: bool,
     #[arg(long, help = "Emit the result as a single JSON object on stdout")]
     json: bool,
+    #[arg(long, help = "Stream per-event factorization progress to stderr")]
+    progress: bool,
 }
 
 fn options_from_cli(cli: &Cli) -> FactorOptions {
@@ -110,7 +135,13 @@ fn main() -> ExitCode {
         }
     };
     let options = options_from_cli(&cli);
-    let (result, timings) = factor_with_timings(&number, &options, |_| Ok(()));
+    let show_progress = cli.progress;
+    let (result, timings) = factor_with_timings(&number, &options, |event| {
+        if show_progress {
+            eprintln!("{}", format_progress(event));
+        }
+        Ok(())
+    });
     match result {
         Ok(report) => {
             if cli.json {
@@ -151,6 +182,13 @@ fn main() -> ExitCode {
 
 fn print_json(value: &serde_json::Value) {
     println!("{value}");
+}
+
+fn format_progress(event: &ProgressEvent) -> String {
+    format!(
+        "progress: stage={} current={} total={} message={}",
+        event.stage, event.current, event.total, event.message
+    )
 }
 
 fn json_report_value(report: &FactorReport, timings: Option<&[StageTiming]>) -> serde_json::Value {
@@ -349,6 +387,39 @@ mod tests {
     fn exit_codes_pin_success_zero_and_failure_nonzero() {
         assert_eq!(ExitCode::SUCCESS, ExitCode::from(0));
         assert_ne!(ExitCode::FAILURE, ExitCode::from(0));
+    }
+
+    #[test]
+    fn cli_no_squfof_still_parses_but_stays_reserved() {
+        let cli = Cli::try_parse_from(["graynfs", "100160063", "--no-squfof"])
+            .expect("hidden no-squfof flag still parses");
+        assert!(cli.no_squfof);
+        let options = options_from_cli(&cli);
+        assert!(!options.use_squfof);
+        assert!(options.validate().is_err());
+    }
+
+    #[test]
+    fn cli_progress_defaults_off_and_parses_when_set() {
+        let bare = Cli::try_parse_from(["graynfs", "100160063"]).expect("parse without progress");
+        assert!(!bare.progress);
+        let flagged = Cli::try_parse_from(["graynfs", "100160063", "--progress"])
+            .expect("parse with progress");
+        assert!(flagged.progress);
+    }
+
+    #[test]
+    fn format_progress_keeps_stage_current_total_message_shape() {
+        let event = ProgressEvent {
+            stage: "collect".to_string(),
+            current: 12,
+            total: 200,
+            message: "sieving the quadratic base".to_string(),
+        };
+        assert_eq!(
+            format_progress(&event),
+            "progress: stage=collect current=12 total=200 message=sieving the quadratic base"
+        );
     }
 
     #[test]

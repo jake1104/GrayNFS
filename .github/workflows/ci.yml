@@ -21,7 +21,14 @@ jobs:
           fallback: cargo-install
       - name: nextest
         run: cargo nextest run --workspace --all-targets
-      - name: quarantine-105bit-release-info (non-blocking, does-not-gate-release)
+      # quarantine-105bit policy (owner CI-quarantine, review 2026-10-19):
+      # non-blocking (continue-on-error true). Rationale: debug-starvation vs
+      # release-fast. 1.1 fixed-config deterministic (3677/2420/1024 bit-identical);
+      # debug factor-elapsed 275.7s vs release 169.1-190.2s (logs/2026.10.19.1.1/);
+      # quarantined 105bit release 7-14s (7.32s 2026.10.18.1.5, 13.15s 2026.10.18.3.3,
+      # 14.22s 2026.10.17.14.4). Verdict: keep non-blocking; blocking switch DECLINED
+      # (no numeric basis). Filter append-only, never narrow.
+      - name: quarantine-105bit-release-info (non-blocking, does-not-gate-release, owner CI-quarantine, review 2026-10-19)
         continue-on-error: true
         run: cargo nextest run --release -p graynfs-core --lib --run-ignored=only -E 'test(factors_105bit)'
       - name: release-build
@@ -49,4 +56,4 @@ jobs:
           tool: nextest
           fallback: cargo-install
       - name: gnfs-degrees-release
-        run: cargo nextest run --release -p graynfs-core --run-ignored=only -E 'test(cubic_gnfs) + test(quartic_gnfs) + test(wide_gnfs)'
+        run: cargo nextest run --release -p graynfs-core --run-ignored=only -E 'test(cubic_gnfs) + test(quartic_gnfs) + test(quintic_gnfs) + test(wide_gnfs)'
