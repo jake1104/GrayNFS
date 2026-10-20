@@ -4,7 +4,7 @@ build-backend = "maturin"
 
 [project]
 name = "graynfs"
-version = "0.1.4"
+version = "0.1.5"
 description = "High-performance GNFS integer factorization with Python bindings"
 requires-python = ">=3.8"
 classifiers = [

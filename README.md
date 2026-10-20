@@ -1,4 +1,4 @@
-# GrayNFS · [![Version](https://img.shields.io/badge/version-v0.1.4-blue.svg)](CHANGELOG.md) [![License: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE.md) [![CI](https://github.com/jake1104/GrayNFS/actions/workflows/ci.yml/badge.svg)](https://github.com/jake1104/GrayNFS/actions/workflows/ci.yml) [![Python](https://img.shields.io/badge/python-3.8%2B-blue.svg)](python/graynfs/__init__.py)
+# GrayNFS · [![Version](https://img.shields.io/badge/version-v0.1.5-blue.svg)](CHANGELOG.md) [![License: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE.md) [![CI](https://github.com/jake1104/GrayNFS/actions/workflows/ci.yml/badge.svg)](https://github.com/jake1104/GrayNFS/actions/workflows/ci.yml) [![Python](https://img.shields.io/badge/python-3.8%2B-blue.svg)](python/graynfs/__init__.py)
 
 Pure-Rust adaptive integer factorization: a GNFS core with a measured cascade to SIQS, ECM, and classical trial methods.
 
@@ -51,7 +51,7 @@ Prerequisites: a Rust stable toolchain plus a C compiler (the default allocator 
 cargo build -p graynfs-cli --release
 .\target\release\graynfs.exe 1000036000099
 python -m maturin build --release --out dist
-python -m pip install --force-reinstall --no-deps dist\graynfs-0.1.4-cp38-abi3-win_amd64.whl
+python -m pip install --force-reinstall --no-deps dist\graynfs-0.1.5-cp38-abi3-win_amd64.whl
 ```
 
 ## Usage
@@ -80,11 +80,11 @@ graynfs.factor(100160063, degree=3)             # [10007, 10009]
 graynfs.factor_report(100160063)["factors"]     # [10007, 10009]
 graynfs.factor_report(100160063)["method"]      # 'fermat'
 graynfs.is_probable_prime(10007)                # True
-graynfs.version()                               # '0.1.4'
+graynfs.version()                               # '0.1.5'
 graynfs.stage_timings(100160063, degree=3)      # [{'stage': 'fermat', ...}]
 ```
 
-All outputs above were verified live against the installed 0.1.4 wheel.
+All outputs above were verified live against the installed 0.1.5 wheel.
 `graynfs.factor` and `graynfs.factor_with_progress` accept `degree: int | None
 = None` (auto-select), `rational_base_bound`, `algebraic_base_bound`,
 `sieve_a_bound`, `sieve_b_bound`, `timeout_seconds` (`None` = no deadline),
@@ -322,6 +322,8 @@ Fermat, small factors to Brent Rho and ECM (Montgomery XZ, PRAC chains,
 unrolled REDC, prime-only stage-2 BSGS, 16-thread curves, stage-2 cap 16M),
 balanced mid-size inputs to the siever or the GNFS degree race, leftovers to
 the Rho fallback. The memory budget is an estimate-based soft guard, not an RSS hard limit.
+The quintic forced-path test covers 27-bit 100160063 only, not larger-input efficiency.
+The 105-bit quarantine stays non-blocking with owner/review recorded.
 
 ## Correctness
 
@@ -359,15 +361,32 @@ evidence only. Opt out explicitly:
 cargo build -p graynfs-cli --release --no-default-features
 ```
 
+## Release notes (v0.1.5 — 2026-10-20)
+
+0.x carries no compatibility promise.
+
+Behavior-preserving release: factorization logic unchanged; all benchmark cells unchanged.
+
+- Bench envelope repeats stayed inside the previously recorded ranges; provenance envelopes verified with no new speed claims.
+- Limits doc sync: no-change verdict after path-separated identity check; README text unchanged.
+- Lift-tail attribution confirmed as SET plus ORDER with the existing bound and scan order unchanged; ceiling-gate triple defined and parked.
+- Quarantine numeric gates defined with release-green accumulation plus a debug completion record; verdict reached ready-to-transition with the flip not executed.
+- Blocking flip declined with non-blocking quarantine maintained; filters unchanged throughout.
+- Envelope compare hardening to explicit key access with corrupted-input rejection proven and success output unchanged.
+- Guard comparison table extended by one labeled row with coefficients unchanged.
+- Verdict count sync and evidence-citation notes recorded; report wording only, no verdict changes.
+- Stale ignore-string corrected to match the observed debug completion; ignore attribute and behavior unchanged.
+- Scope line correction pointing at the flag location plus duplicate-checkpoint memos; no deletions or renumbers.
+
 ## Release notes (v0.1.4 — 2026-10-19)
 
 0.x carries no compatibility promise.
 
-Behavior-preserving release: no factorization logic changes except report-only
-additions; all benchmark cells unchanged.
+Behavior-preserving release: factorization logic unchanged; memory-guard
+thresholds changed, early ResourceLimit possible; all benchmark cells unchanged.
 
 - Lift-tail decomposition verdict: the slow path is a difficult path, not scheduling luck; the square-root bound is unchanged.
-- Scoped memory estimator: rank-excluded coverage 3x (240/100), soft guard unchanged, no caller changes.
+- Scoped memory estimator: rank-excluded coverage 3x (240/100), soft-guard mechanism unchanged (thresholds per above), no caller changes.
 - Quintic forced-path regression test pinned plus the 4-term degrees filter; no production change.
 - Bench provenance: `commit_sha` from `GITHUB_SHA`/`GRAYNFS_COMMIT` (else None) with whitespace trim; `run_id` and `commit_or_id` unchanged.
 - Quarantine stays non-blocking (`continue-on-error: true`); blocking conversion declined for lack of numeric grounds.

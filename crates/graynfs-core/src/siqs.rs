@@ -2819,7 +2819,7 @@ mod siqs_tests {
     }
 
     #[test]
-    #[ignore = "2026.10.17.8.2 starvation boundary: debug dies at the 110s deadline, release passes in seconds; run under release"]
+    #[ignore = "2026.10.17.8.2 starvation boundary; debug slow but 41.70s green observed (B2 evidence, review 2026-10-20); run under release"]
     fn factors_105bit_by_default_path() {
         let n = crate::parse_decimal("35658606617546370626847644936101").expect("valid input");
         let options = FactorOptions {

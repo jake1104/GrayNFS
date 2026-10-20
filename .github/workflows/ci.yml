@@ -28,6 +28,25 @@ jobs:
       # quarantined 105bit release 7-14s (7.32s 2026.10.18.1.5, 13.15s 2026.10.18.3.3,
       # 14.22s 2026.10.17.14.4). Verdict: keep non-blocking; blocking switch DECLINED
       # (no numeric basis). Filter append-only, never narrow.
+      # blocking-transition gate v0.1.4.3.2 (owner CI-quarantine, review 2026-10-20):
+      # Until ALL of B1+B2 met, verdict DECLINE (non-blocking stays).
+      # (B1) release stability: 5 consecutive release greens of factors_105bit,
+      # each wall inside the 5-20s band; v0.1.4.3.1 7.48s counts as point 1/5,
+      # no median claim until 5/5. (B2) debug-starvation resolved: one debug green
+      # of the same test within 1800s with byte-identical factors (product check),
+      # proving the quarantine cause is gone, not release luck.
+      # Transition itself is filter append-only, never narrow.
+      # verdict v0.1.4.5.3 (review 2026-10-20): B1+B2 BOTH MET. B1 5/5
+      # consecutive release greens inside 5-20s (v0.1.4.3.1 7.48s + v0.1.4.5.1
+      # 7.93/11.89/13.76/7.34s; zero intervening 105bit failures on record).
+      # B2 debug green 41.70s within 1800s, byte-identical factors via test
+      # asserts (siqs.rs:2834-2844). continue-on-error NOT flipped here (no
+      # separate approval); non-blocking stays. Declared READY-TO-TRANSITION;
+      # the blocking flip itself is a separate gated decision.
+      # verdict v0.1.4.8.1 (review 2026-10-20): blocking flip DECLINED (default).
+      # B1 5/5 (7.48+7.93/11.89/13.76/7.34s) + B2 41.70s on record, READY-TO-TRANSITION
+      # maintained; no separate approval evidence in scope, so continue-on-error
+      # stays true, NO flip. Filter append-only, never narrow.
       - name: quarantine-105bit-release-info (non-blocking, does-not-gate-release, owner CI-quarantine, review 2026-10-19)
         continue-on-error: true
         run: cargo nextest run --release -p graynfs-core --lib --run-ignored=only -E 'test(factors_105bit)'
@@ -55,5 +74,10 @@ jobs:
         with:
           tool: nextest
           fallback: cargo-install
+      # quintic-scope (2026.10.19.7.3): quintic pin covers 27-bit 100160063
+      # only, not larger-input efficiency. 43-bit row 4606404410723
+      # (4265/2810, ~8.2 s reference) deferred from CI: efficiency-only
+      # signal on the same degree-5 path, extra cost on the 60 min budget.
+      # wide_gnfs expects siqs (default-race routing); name kept, no rename.
       - name: gnfs-degrees-release
         run: cargo nextest run --release -p graynfs-core --run-ignored=only -E 'test(cubic_gnfs) + test(quartic_gnfs) + test(quintic_gnfs) + test(wide_gnfs)'

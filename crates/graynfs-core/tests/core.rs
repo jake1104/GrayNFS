@@ -230,6 +230,11 @@ fn quartic_gnfs_factors_semiprime() {
 
 #[test]
 #[ignore = "requires release profile"]
+// Scope: quintic forced path covers 27-bit 100160063 only (26.6 bits),
+// not larger-input efficiency. The 43-bit row 4606404410723 (42.1 bits,
+// 4265/2810, rational 4000 / algebraic 20000 / a 72000 / b 8000, ~8.2 s
+// README reference) is documented but deferred from CI: same degree-5 path,
+// efficiency-only signal, extra cost on the 60 min degrees job. See 2026.10.19.7.3.
 fn quintic_gnfs_factors_semiprime() {
     let number = parse_decimal("100160063").expect("valid input");
     let options = FactorOptions {
@@ -252,6 +257,10 @@ fn quintic_gnfs_factors_semiprime() {
 
 #[test]
 #[ignore = "wide GNFS benchmark"]
+// Anti-misuse: method == "siqs" is expected here, not a bug. The default
+// race routes this 40-bit input (1000036000099, 39.9 bits) to SIQS
+// structurally; do not "fix" the assertion to "gnfs" and do not rename
+// this test (name kept per prior decision, see 2026.10.18.6.4).
 fn wide_gnfs_regression() {
     let number = parse_decimal("1000036000099").expect("valid input");
     let options = FactorOptions {

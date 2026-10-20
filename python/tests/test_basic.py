@@ -118,7 +118,7 @@ def test_threads_explicit():
 
 
 def test_version() -> None:
-    assert graynfs.version() == "0.1.4"
+    assert graynfs.version() == "0.1.5"
 
 
 def test_factor_rejects_non_integer() -> None:
