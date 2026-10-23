@@ -1537,6 +1537,291 @@ pub(crate) fn first_viable_poly_index(
     usize::MAX
 }
 
+#[derive(Clone, Debug, Default)]
+pub(crate) struct SiqsBank {
+    pub relations: Vec<Relation>,
+    pub next_poly: usize,
+}
+
+impl SiqsBank {
+    pub(crate) fn new() -> Self {
+        Self {
+            relations: Vec::new(),
+            next_poly: 0,
+        }
+    }
+
+    pub(crate) fn len(&self) -> usize {
+        self.relations.len()
+    }
+
+    pub(crate) fn ingest_new(&mut self, fresh: Vec<Relation>, next_poly: usize) {
+        let mut seen: std::collections::HashSet<Vec<u64>> = self
+            .relations
+            .iter()
+            .map(|item| item.mask.clone())
+            .collect();
+        for relation in fresh {
+            if seen.insert(relation.mask.clone()) {
+                self.relations.push(relation);
+            }
+        }
+        self.next_poly = next_poly.max(self.next_poly);
+    }
+}
+
+pub(crate) fn siqs_pilot_with_bank<F>(
+    n: &Integer,
+    options: &FactorOptions,
+    cancelled: &AtomicBool,
+    deadline: Option<Instant>,
+    progress: &mut F,
+    timings: Option<&TimingCollector>,
+    mut bank: SiqsBank,
+) -> (Option<(Integer, SiqsOutcome)>, SiqsBank)
+where
+    F: FnMut(&ProgressEvent) -> Result<(), FactorError>,
+{
+    let mut working = options.clone();
+    let factor_cap = resolve_siqs_table(n, &mut working);
+    let memory_budget = siqs_memory_budget_bytes(options);
+    let base = FactorBase::for_siqs(n, working.rational_base_bound, working.algebraic_base_bound);
+    let columns = base.column_count();
+    let half_width = match i64::try_from(working.sieve_a_bound) {
+        Ok(value) if value > 0 => value,
+        _ => return (None, bank),
+    };
+    let workers = siqs_worker_count(&working);
+    if siqs_collect_estimate_bytes(columns, half_width, workers) > memory_budget {
+        return (None, bank);
+    }
+    let interval_bits = (64 - (half_width as u64).leading_zeros()).max(1);
+    let target_a = Integer::from(1) << target_a_bits(n.bits(), interval_bits);
+    let suitable = suitable_primes(n, working.algebraic_base_bound);
+    let poly_floor = first_viable_poly_index(&suitable, &target_a, factor_cap);
+    if poly_floor == usize::MAX {
+        return (None, bank);
+    }
+    let mut next_poly = bank.next_poly.max(poly_floor);
+    let mut relations = std::mem::take(&mut bank.relations);
+    let mut seen_masks: std::collections::HashSet<Vec<u64>> =
+        relations.iter().map(|item| item.mask.clone()).collect();
+    let mut lp_graph = LpGraph::new();
+    let display: Option<PolynomialPair> =
+        generate_polynomial_from(n, &suitable, &target_a, 0, factor_cap).map(|poly| {
+            PolynomialPair {
+                degree: 2,
+                coefficients: vec![
+                    poly.coeff_c.clone(),
+                    Integer::from(2) * &poly.coeff_b,
+                    poly.coeff_a.clone(),
+                ],
+                m: poly.coeff_b.clone(),
+            }
+        });
+    let collect_timer = Timer::new(timings, "siqs_collect", Some(2));
+    let lp_bound = u64::try_from(working.large_prime_bound).unwrap_or(u64::MAX);
+    let splitters = splitter_primes(&base, lp_bound);
+    let gamma_primes: Vec<u64> = base
+        .rational_primes
+        .iter()
+        .chain(base.algebraic_modulus_primes.iter())
+        .copied()
+        .collect();
+    let gammas = SiqsGammaTable::build(n, &gamma_primes);
+    let toggles = SiqsToggleIndex::build(&base);
+    let barrett_cover = gamma_primes
+        .iter()
+        .copied()
+        .max()
+        .unwrap_or(2)
+        .max(working.algebraic_base_bound as u64)
+        .max(2);
+    let barrett = SiqsBarrettTable::build(barrett_cover);
+    let mut totals = SiqsPolyCounters::default();
+    let mut polys_done = 0_usize;
+    'rounds: loop {
+        if cancelled.load(Ordering::Relaxed) {
+            break;
+        }
+        if deadline.is_some_and(|limit| Instant::now() >= limit) {
+            break;
+        }
+        if next_poly > SIQS_POLY_INDEX_CAP {
+            break;
+        }
+        let batch: Vec<usize> = (0..workers)
+            .map(|w| next_poly + w)
+            .take_while(|&i| i <= SIQS_POLY_INDEX_CAP)
+            .collect();
+        if batch.is_empty() {
+            break;
+        }
+        next_poly += batch.len();
+        let mut round_out: Vec<(usize, (PolyOutput, SiqsPolyCounters))> =
+            Vec::with_capacity(batch.len());
+        let mut round_generated = 0_usize;
+        let mut round_failed = false;
+        let target_a_ref: &Integer = &target_a;
+        let base_ref: &FactorBase = &base;
+        let suitable_worker: &[SiqsSuitablePrime] = &suitable;
+        let gammas_ref: &SiqsGammaTable = &gammas;
+        let toggles_ref: &SiqsToggleIndex = &toggles;
+        let barrett_ref: &SiqsBarrettTable = &barrett;
+        let splitters_ref: &[u64] = &splitters;
+        std::thread::scope(|scope| {
+            let mut handles = Vec::with_capacity(batch.len());
+            for &index in &batch {
+                handles.push(scope.spawn(move || {
+                    let gen_start = Instant::now();
+                    let poly = match generate_polynomial_from(
+                        n,
+                        suitable_worker,
+                        target_a_ref,
+                        index * 3,
+                        factor_cap,
+                    ) {
+                        Some(poly) => poly,
+                        None => {
+                            let mut empty = SiqsPolyCounters::default();
+                            empty.generate_nanos += gen_start.elapsed().as_nanos() as u64;
+                            return (
+                                index,
+                                false,
+                                Ok((
+                                    (Vec::<Relation>::new(), Vec::<(Relation, Vec<u64>)>::new()),
+                                    empty,
+                                )),
+                            );
+                        }
+                    };
+                    let gen_nanos = gen_start.elapsed().as_nanos() as u64;
+                    let mut nop = |_: &ProgressEvent| Ok(());
+                    let out = collect_one_poly(
+                        n,
+                        &poly,
+                        index as u64,
+                        base_ref,
+                        gammas_ref,
+                        toggles_ref,
+                        barrett_ref,
+                        half_width,
+                        lp_bound,
+                        splitters_ref,
+                        cancelled,
+                        deadline,
+                        &mut nop,
+                        columns as u64,
+                    )
+                    .map(|(output, mut poly_stats)| {
+                        poly_stats.generate_nanos += gen_nanos;
+                        (output, poly_stats)
+                    });
+                    (index, true, out)
+                }));
+            }
+            for handle in handles {
+                match handle.join() {
+                    Ok((index, generated, Ok(out))) => {
+                        if generated {
+                            round_generated += 1;
+                            polys_done += 1;
+                        }
+                        round_out.push((index, out))
+                    }
+                    Ok((_, _, Err(_))) => {
+                        round_failed = true;
+                    }
+                    Err(_) => {
+                        round_failed = true;
+                    }
+                }
+            }
+        });
+        if round_failed {
+            break 'rounds;
+        }
+        if round_generated == 0 {
+            break;
+        }
+        round_out.sort_by_key(|(index, _)| *index);
+        for (_, ((smooth, partials), poly_stats)) in round_out {
+            totals.accumulate(&poly_stats);
+            for relation in smooth {
+                push_unique(&mut seen_masks, &mut relations, relation);
+            }
+            for (relation, lps) in partials {
+                let mut combined: Vec<Relation> = Vec::new();
+                lp_graph.ingest(relation, lps, n, &mut combined);
+                totals.merge_count += combined.len() as u64;
+                for relation in combined {
+                    push_unique(&mut seen_masks, &mut relations, relation);
+                }
+            }
+        }
+        let _ = progress(&ProgressEvent {
+            stage: "collect".to_string(),
+            current: relations.len() as u64,
+            total: columns as u64,
+            message: "sieving siqs pilot polynomial".to_string(),
+        });
+        let live_bytes = estimate_live_bytes(columns, relations.len(), 0, 0);
+        if live_bytes > memory_budget {
+            break 'rounds;
+        }
+        if relations.len() >= columns {
+            break;
+        }
+        if polys_done >= workers {
+            break;
+        }
+    }
+    collect_timer.finish(format!(
+        "pilot polys={polys_done} relations={} banked={}",
+        relations.len(),
+        relations.len()
+    ));
+    bank.ingest_new(relations, next_poly);
+    if bank.relations.len() <= 1 {
+        return (None, bank);
+    }
+    let need_bytes = siqs_rank_estimate_bytes(columns, bank.relations.len());
+    if need_bytes > memory_budget {
+        return (None, bank);
+    }
+    let (rank, dependencies) = {
+        let timer = Timer::new(timings, "siqs_rank", Some(2));
+        let value = rank_and_dependencies(&bank.relations, columns, 128, 1, workers);
+        timer.finish(format!("rank={} of {}", value.0, bank.relations.len()));
+        value
+    };
+    if bank.relations.len() <= rank {
+        return (None, bank);
+    }
+    for (di, index) in crate::linear_algebra::order_dependencies_by_cost(&dependencies)
+        .iter()
+        .enumerate()
+    {
+        let timer = Timer::new(timings, "siqs_sqrt", Some(2));
+        let attempt_result = siqs_extract_relations(n, &bank.relations, &dependencies[*index]);
+        let found = attempt_result.is_ok();
+        timer.finish(format!("dependency={di} found={found}"));
+        if let Ok(divisor) = attempt_result {
+            let outcome = SiqsOutcome {
+                display: match display {
+                    Some(pair) => pair,
+                    None => return (None, bank),
+                },
+                relations: bank.relations.len(),
+                rank,
+            };
+            let hit = (divisor, outcome);
+            return (Some(hit), bank);
+        }
+    }
+    (None, bank)
+}
+
 pub(crate) fn siqs_divisor<F>(
     n: &Integer,
     options: &FactorOptions,
@@ -2816,6 +3101,31 @@ mod siqs_tests {
             usize::MAX
         );
         assert!(!window_reaches_target(&suitable, 0, &unreachable, Some(10)));
+    }
+
+    #[test]
+    fn banked_collection_resumes_past_previous_poly() {
+        use crate::algebraic::QuadraticElement;
+        use crate::relations::Relation;
+        fn made(a: u64, word: u64) -> Relation {
+            Relation {
+                a: Integer::from(a),
+                b: Integer::from(0_u64),
+                rational_value: Integer::from(a),
+                algebraic_value: QuadraticElement {
+                    x: Integer::from(a),
+                    y: Integer::from(0),
+                },
+                mask: vec![word],
+            }
+        }
+        let mut bank = SiqsBank::new();
+        bank.ingest_new(vec![made(2, 0b01), made(3, 0b10)], 5);
+        assert_eq!(bank.len(), 2);
+        assert_eq!(bank.next_poly, 5);
+        bank.ingest_new(vec![made(5, 0b100), made(2, 0b01)], 9);
+        assert_eq!(bank.next_poly, 9);
+        assert_eq!(bank.len(), 3);
     }
 
     #[test]

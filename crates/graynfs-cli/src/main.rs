@@ -308,6 +308,56 @@ mod tests {
     }
 
     #[test]
+    fn json_report_passes_scheduler_stages_with_stable_keys() {
+        let mut report = sample_report();
+        report.timings = vec![
+            StageTiming {
+                stage: "reclaim".to_string(),
+                degree: None,
+                elapsed_ms: 0,
+                detail: "reclaim=none siqs_width=700 ecm_digits=15 workers=16".to_string(),
+            },
+            StageTiming {
+                stage: "joint".to_string(),
+                degree: None,
+                elapsed_ms: 0,
+                detail: "shares=fallback winner=ecm banked=0".to_string(),
+            },
+            StageTiming {
+                stage: "cascade_projection".to_string(),
+                degree: Some(2),
+                elapsed_ms: 0,
+                detail: "cost_ecm_ms=10 cost_siqs_ms=20 lower_cost=siqs".to_string(),
+            },
+            StageTiming {
+                stage: "ecm".to_string(),
+                degree: None,
+                elapsed_ms: 5,
+                detail: "divisor=7 curves=2 ecm_ms=5".to_string(),
+            },
+        ];
+        let value = json_report_value(&report, Some(report.timings.as_slice()));
+        let timings = value["timings"].as_array().expect("timings array");
+        assert_eq!(timings.len(), 4);
+        let stages: Vec<&str> = timings
+            .iter()
+            .map(|entry| entry["stage"].as_str().expect("stage string"))
+            .collect();
+        assert_eq!(
+            stages,
+            vec!["reclaim", "joint", "cascade_projection", "ecm"]
+        );
+        for entry in timings {
+            let object = entry.as_object().expect("timing object");
+            let mut keys: Vec<&str> = object.keys().map(String::as_str).collect();
+            keys.sort_unstable();
+            assert_eq!(keys, vec!["degree", "detail", "elapsed_ms", "stage"]);
+        }
+        assert_eq!(timings[1]["detail"], "shares=fallback winner=ecm banked=0");
+        assert_eq!(value["method"], "gnfs");
+    }
+
+    #[test]
     fn json_report_serializes_nullable_degree() {
         let mut report = sample_report();
         report.degree = None;

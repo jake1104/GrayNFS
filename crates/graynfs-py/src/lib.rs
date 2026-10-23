@@ -1,6 +1,6 @@
 use graynfs_core::{
     FactorError, FactorOptions, StageTiming, factor, factor_with_progress, factor_with_timings,
-    parse_decimal, probable_prime,
+    parse_decimal, probable_prime, probable_prime_fast,
 };
 use pyo3::exceptions::PyValueError;
 use pyo3::prelude::*;
@@ -228,6 +228,37 @@ fn is_probable_prime_decimal(py: Python<'_>, n: &str) -> PyResult<bool> {
     Ok(py.detach(|| probable_prime(&value)))
 }
 
+#[pyfunction]
+#[pyo3(signature = (n, rounds=64))]
+fn is_probable_prime_fast_decimal(py: Python<'_>, n: &str, rounds: u64) -> PyResult<bool> {
+    let value = parse_decimal(n).map_err(to_py_error)?;
+    Ok(py.detach(|| probable_prime_fast(&value, rounds)))
+}
+
+#[pyfunction]
+#[pyo3(signature = (n, method="bpsw"))]
+fn is_prime_proof_decimal(py: Python<'_>, n: &str, method: &str) -> PyResult<bool> {
+    let value = parse_decimal(n).map_err(to_py_error)?;
+    py.detach(|| match method {
+        "bpsw" => Ok(graynfs_core::prime::is_baillie_psw_prime(&value)),
+        "frobenius" => Ok(graynfs_core::prime::is_frobenius_probable_prime(&value)),
+        "aks" => Ok(graynfs_core::prime::is_prime_aks_proof(&value)),
+        "bpsw_frobenius" => {
+            let options_frobenius = FactorOptions {
+                use_frobenius: true,
+                ..FactorOptions::default()
+            };
+            Ok(graynfs_core::prime::is_probable_prime_with_options(
+                &value,
+                &options_frobenius,
+            ))
+        }
+        _ => Err(PyValueError::new_err(format!(
+            "input: unknown proof method: {method}"
+        ))),
+    })
+}
+
 #[allow(clippy::too_many_arguments)]
 #[pyfunction]
 #[pyo3(signature = (n, degree=None, rational_base_bound=2000, algebraic_base_bound=2000, sieve_a_bound=700, sieve_b_bound=120, timeout_seconds=None, max_memory_mb=None, allow_fallback=true, use_fermat=true, use_squfof=true, use_pm1=true, use_pp1=true, use_ecm=true, use_mpqs=true, threads=None, perf_mode=false))]
@@ -440,6 +471,8 @@ fn _graynfs(module: &Bound<'_, PyModule>) -> PyResult<()> {
     module.add_function(wrap_pyfunction!(stage_timings_decimal, module)?)?;
     module.add_function(wrap_pyfunction!(factor_report_decimal, module)?)?;
     module.add_function(wrap_pyfunction!(is_probable_prime_decimal, module)?)?;
+    module.add_function(wrap_pyfunction!(is_probable_prime_fast_decimal, module)?)?;
+    module.add_function(wrap_pyfunction!(is_prime_proof_decimal, module)?)?;
     module.add_function(wrap_pyfunction!(version, module)?)?;
     Ok(())
 }

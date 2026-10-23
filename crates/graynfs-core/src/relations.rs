@@ -11,7 +11,7 @@ use crate::factor::ProgressEvent;
 use crate::integer::{Integer, IntegerExt, integer_gcd};
 use crate::options::{FactorOptions, estimate_collect_bytes, estimate_live_bytes};
 use crate::polynomial::PolynomialPair;
-use crate::prime::is_probable_prime;
+use crate::prime::is_prime_u64;
 
 const PROGRESS_BATCHES: usize = 8;
 pub(crate) fn sieve_array_bytes(blocks: usize, width: usize) -> u64 {
@@ -867,7 +867,7 @@ fn large_prime_part(residual: u128, base_bound: u64, lp_bound: u64) -> Algebraic
     if small <= base_bound || small > lp_bound {
         return AlgebraicOutcome::Reject;
     }
-    if is_probable_prime(&Integer::from(small)) {
+    if is_prime_u64(small) {
         AlgebraicOutcome::Partial(small)
     } else {
         AlgebraicOutcome::Reject

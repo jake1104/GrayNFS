@@ -95,7 +95,7 @@ pub fn probable_prime(value: &Integer, rounds: u64) -> bool {
     if value < &Integer::from(2) {
         return false;
     }
-    let small_primes = [2_u64, 3, 5, 7, 11, 13, 17, 19, 23, 29, 31, 37];
+    let small_primes = crate::prime::DETERMINISTIC_U64_BASES;
     for prime in small_primes {
         let prime_value = Integer::from(prime);
         if value == &prime_value {
@@ -112,7 +112,7 @@ pub fn probable_prime(value: &Integer, rounds: u64) -> bool {
         shifts += 1;
     }
     let bases: &[u64] = if value.bits() <= 64 {
-        &[2, 3, 5, 7, 11, 13, 17, 19, 23, 29, 31, 37]
+        &crate::prime::DETERMINISTIC_U64_BASES
     } else {
         &[2, 3, 5, 7, 11, 13, 17, 19, 23, 29, 31, 37, 41, 43, 47, 53]
     };

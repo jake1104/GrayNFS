@@ -225,9 +225,7 @@ where
         });
     }
     let cancelled = AtomicBool::new(false);
-    let deadline = options
-        .max_duration
-        .map(|duration| Instant::now() + duration);
+    let deadline = options.effective_deadline(Instant::now());
     emit(
         &mut progress,
         "preprocessing",
@@ -308,7 +306,7 @@ where
     if cancelled.load(Ordering::Relaxed) {
         return Err(FactorError::Cancelled);
     }
-    if crate::prime::is_probable_prime(n) {
+    if crate::prime::is_probable_prime_with_options(n, options) {
         factors.push(n.clone());
         if outcome.winners.is_empty() {
             outcome.record("prime");
@@ -438,21 +436,18 @@ where
     } else {
         0
     };
-    let mut signals = crate::cascade::CascadeSignals::collect(n, deadline);
+    let mut signals = crate::cascade::CascadeSignals::collect_with_options(n, options, deadline);
     if !options.skip_preprocessing {
-        signals.trial_division_primes_checked = Some(trial_checked);
+        signals.observe_trial_division(trial_checked);
     }
     let (fermat_budget, pm1_budget, pp1_budget, ecm_budget) =
         crate::cascade::allocate_slices(&signals, signals.remaining_ms(deadline));
     let fermat_slice = budget_to_deadline(fermat_budget);
     let pm1_slice = budget_to_deadline(pm1_budget);
     let pp1_slice = budget_to_deadline(pp1_budget);
-    let ecm_slice = budget_to_deadline(ecm_budget);
     let mut cheap_budget: Option<u128> = None;
-    let available = std::thread::available_parallelism()
-        .map(|value| value.get())
-        .unwrap_or(1);
-    let workers = options.threads.unwrap_or(available).max(1);
+    let workers = options.effective_workers();
+    signals.observe_workers(workers);
     let trial_full_scan = trial_checked >= crate::prime::small_primes().len() as u64;
     let stage_one = crate::pm1::pm1_bound_for_slice(
         signals.target_digits,
@@ -649,76 +644,65 @@ where
     let mut ecm_tranche_note = String::from("ecm_t1=none ecm_cap=open");
     if !options.skip_preprocessing && options.use_ecm {
         let timer = Timer::new(timings, "ecm", None);
-        let ecm_start = Instant::now();
-        let ecm_box_ms =
-            ecm_slice.map(|limit| limit.saturating_duration_since(ecm_start).as_millis());
-        let first_box =
-            crate::cascade::tranche_first_box(ecm_budget, signals.remaining_ms(deadline));
-        let first_slice = match (ecm_slice, first_box) {
-            (Some(limit), Some(first)) => Some(limit.min(
-                Instant::now() + Duration::from_millis(u64::try_from(first).unwrap_or(u64::MAX)),
-            )),
-            _ => ecm_slice,
+        let joint = crate::cascade::run_joint_ecm_siqs(
+            n,
+            &mut signals,
+            options,
+            cancelled,
+            deadline,
+            timings,
+            None,
+            crate::siqs::SiqsBank::new(),
+        );
+        let t1_text = joint
+            .ecm_t1
+            .map_or_else(|| "none".to_string(), |value| value.to_string());
+        ecm_tranche_note = match joint.ecm_cap {
+            Some(cap) => format!("ecm_t1={t1_text} ecm_cap={cap}"),
+            None => format!("ecm_t1={t1_text} ecm_cap=open"),
         };
-        let first = crate::ecm::ecm_factor_report(n, 15, None, first_slice, workers, None);
-        signals.report_ecm(first.curves_run, first.elapsed_ms, first.divisor.is_some());
-        let first_ms = first.elapsed_ms;
-        let mut curves = first.curves_run;
-        let mut stage_one_ms = first.stage_one_ms;
-        let mut stage_two_ms = first.stage_two_ms;
-        let mut divisor = first.divisor;
-        let t1_text = first_box.map_or_else(|| "none".to_string(), |value| value.to_string());
-        ecm_tranche_note = format!("ecm_t1={t1_text} ecm_cap=open");
-        if divisor.is_none() && first_box.is_some_and(|boxed| first_ms >= boxed) {
-            let live_two = signals.remaining_ms(deadline);
-            let spent = ecm_start.elapsed().as_millis();
-            let remain_box = match (ecm_budget, live_two) {
-                (Some(box_ms), Some(live)) => Some(box_ms.saturating_sub(spent).min(live)),
-                (Some(box_ms), None) => Some(box_ms.saturating_sub(spent)),
-                _ => None,
-            };
-            let capped_two = crate::cascade::cap_ecm_slice(&signals, live_two, remain_box);
-            if let (Some(cap), Some(remain)) = (capped_two, remain_box)
-                && cap < remain
-            {
-                ecm_tranche_note = format!("ecm_t1={t1_text} ecm_cap={cap}");
-            }
-            let second_slice = match (ecm_slice, capped_two) {
-                (Some(limit), Some(cap)) => Some(limit.min(
-                    Instant::now() + Duration::from_millis(u64::try_from(cap).unwrap_or(u64::MAX)),
-                )),
-                _ => ecm_slice,
-            };
-            let second = crate::ecm::ecm_factor_report(
-                n,
-                15,
-                None,
-                second_slice,
-                workers,
-                Some((first.end_digits, first.end_curve)),
-            );
-            signals.report_ecm(
-                second.curves_run,
-                second.elapsed_ms,
-                second.divisor.is_some(),
-            );
-            curves += second.curves_run;
-            stage_one_ms += second.stage_one_ms;
-            stage_two_ms += second.stage_two_ms;
-            divisor = second.divisor;
-        }
-        let ecm_ms = ecm_start.elapsed().as_millis();
-        let ecm_box_ratio = match ecm_box_ms {
+        let ecm_box_ratio = match joint.ecm_box_ms {
             Some(box_ms) if box_ms > 0 => {
-                format!(" ecm_box_ratio={:.2}", ecm_ms as f64 / box_ms as f64)
+                format!(" ecm_box_ratio={:.2}", joint.ecm_ms as f64 / box_ms as f64)
             }
             _ => String::new(),
         };
-        if let Some(divisor) = divisor {
+        if let Some(collector) = timings {
+            let relations_needed = crate::cascade::estimate_siqs_relations_needed(n, options);
+            let share_text = match crate::cascade::governor_slices(
+                &signals,
+                signals.target_digits,
+                relations_needed,
+            ) {
+                Some((ecm_share, siqs_share)) => {
+                    format!("ecm_share={ecm_share:.4} siqs_share={siqs_share:.4}")
+                }
+                None => "shares=fallback".to_string(),
+            };
+            collector.record_elapsed(
+                "joint",
+                None,
+                0,
+                format!(
+                    "{} ecm_workers={} siqs_workers={} fallback={} winner={} banked={} next_poly={} ecm_resume={}:{}",
+                    share_text,
+                    joint.ecm_workers,
+                    joint.siqs_workers,
+                    joint.used_fallback,
+                    joint.winner.unwrap_or("none"),
+                    joint.siqs_bank.len(),
+                    joint.siqs_bank.next_poly,
+                    joint.ecm_resume.map_or(0, |(digits, _)| digits),
+                    joint.ecm_resume.map_or(0, |(_, curve)| curve),
+                ),
+            );
+        }
+        if let Some(divisor) = joint.divisor {
             let cofactor = n / &divisor;
-            outcome.record("ecm");
+            outcome.record(joint.winner.unwrap_or("ecm"));
             timer.finish(format!(
-                "divisor={divisor} curves={curves} ecm_ms={ecm_ms} stage1_ms={stage_one_ms} stage2_ms={stage_two_ms}{ecm_box_ratio}"
+                "divisor={divisor} curves={} ecm_ms={} stage1_ms={} stage2_ms={}{ecm_box_ratio}",
+                joint.ecm_curves, joint.ecm_ms, joint.ecm_stage_one_ms, joint.ecm_stage_two_ms
             ));
             return factor_recursive(
                 &divisor,
@@ -754,7 +738,8 @@ where
             });
         }
         timer.finish(format!(
-            "no divisor curves={curves} ecm_ms={ecm_ms} stage1_ms={stage_one_ms} stage2_ms={stage_two_ms}{ecm_box_ratio}"
+            "no divisor curves={} ecm_ms={} stage1_ms={} stage2_ms={}{ecm_box_ratio}",
+            joint.ecm_curves, joint.ecm_ms, joint.ecm_stage_one_ms, joint.ecm_stage_two_ms
         ));
     }
     {
@@ -1133,10 +1118,10 @@ where
             }
             if rate > 0.0
                 && signals
-                    .pilot_relations_per_ms
-                    .is_none_or(|best| rate > best)
+                    .measured_relations_per_sec()
+                    .is_none_or(|best| rate * 1000.0 > best)
             {
-                signals.pilot_relations_per_ms = Some(rate);
+                signals.report_pilot(found, pilot_ms);
             }
         }
         if let Some(collector) = timings {
@@ -1169,6 +1154,13 @@ where
                     lower_cost.unwrap_or("none"),
                 ),
             );
+            if let Some(needed) = relations_needed {
+                let _governor = crate::cascade::governor_slices(
+                    signals,
+                    crate::cascade::escalate_digits(signals.target_digits),
+                    needed,
+                );
+            }
         }
         if let Some(collector) = timings {
             let status = match &outcome {
@@ -1325,14 +1317,7 @@ where
             }
         };
         emit(progress, "gnfs", 4, 7, "relations collected")?;
-        let workers = options
-            .threads
-            .unwrap_or(
-                std::thread::available_parallelism()
-                    .map(|value| value.get())
-                    .unwrap_or(1),
-            )
-            .max(1);
+        let workers = options.effective_workers();
         let (rank, dependencies) = {
             let timer = Timer::new(timings, "matrix_rank", Some(2));
             let value = rank_and_dependencies(&relations, base.column_count(), 128, 1, workers);
@@ -1863,6 +1848,10 @@ pub fn probable_prime(value: &Integer) -> bool {
     crate::prime::is_probable_prime(value)
 }
 
+pub fn probable_prime_fast(value: &Integer, rounds: u64) -> bool {
+    crate::prime::is_probable_prime_fast(value, rounds)
+}
+
 pub fn default_deadline(options: &FactorOptions) -> Option<Instant> {
     options
         .max_duration
@@ -1872,6 +1861,29 @@ pub fn default_deadline(options: &FactorOptions) -> Option<Instant> {
 #[cfg(test)]
 mod factor_tests {
     use super::better_pilot_pick;
+
+    #[test]
+    fn frobenius_gated_gate_preserves_default_verdicts() {
+        let corpus = ["15", "91", "101", "10403", "100160063"];
+        for digits in corpus {
+            let value = super::parse_decimal(digits).expect("valid decimal");
+            let default_report =
+                super::factor(&value, &super::FactorOptions::default()).expect("factors");
+            let gated_report = super::factor(
+                &value,
+                &super::FactorOptions {
+                    use_frobenius: true,
+                    ..super::FactorOptions::default()
+                },
+            )
+            .expect("factors");
+            assert_eq!(default_report.factors, gated_report.factors);
+        }
+        let prime = super::parse_decimal("101").expect("valid decimal");
+        let report =
+            super::factor(&prime, &super::FactorOptions::default()).expect("prime factors");
+        assert_eq!(report.factors, vec!["101".to_string()]);
+    }
 
     #[test]
     fn pilot_pick_prefers_measured_rate() {
@@ -2085,6 +2097,175 @@ mod factor_tests {
             sightings.push(cap_text.to_string());
         }
         panic!("burn bound never produced a numeric cap sighting in 3 attempts, got {sightings:?}");
+    }
+
+    #[test]
+    fn joint_ecm_win_records_ecm_with_joint_and_reclaim_rows() {
+        let n = super::parse_decimal("3994424150216394531668178182146365185669")
+            .expect("valid decimal");
+        let options = super::FactorOptions::default();
+        let (outcome, snapshot) = super::factor_with_timings(&n, &options, |_| Ok(()));
+        let report = outcome.expect("joint ECM input factors");
+        assert_eq!(report.method, "ecm");
+        assert!(!report.method.contains("joint"));
+        assert!(!report.method.contains("reclaim"));
+        let joint = report
+            .timings
+            .iter()
+            .find(|entry| entry.stage == "joint")
+            .expect("joint decision row present");
+        assert!(
+            joint.detail.contains("winner=ecm"),
+            "joint row must name the ECM winner: {}",
+            joint.detail
+        );
+        assert!(
+            report.timings.iter().any(|entry| entry.stage == "reclaim"),
+            "reclaim decision row present"
+        );
+        assert!(
+            report
+                .timings
+                .iter()
+                .any(|entry| entry.stage == "ecm" && entry.detail.contains("divisor=")),
+            "winning ECM tranche row present"
+        );
+        assert_eq!(report.timings.len(), snapshot.len());
+        for (report_entry, snapshot_entry) in report.timings.iter().zip(snapshot.iter()) {
+            assert_eq!(report_entry.stage, snapshot_entry.stage);
+            assert_eq!(report_entry.degree, snapshot_entry.degree);
+            assert_eq!(report_entry.elapsed_ms, snapshot_entry.elapsed_ms);
+            assert_eq!(report_entry.detail, snapshot_entry.detail);
+        }
+        let mut product = super::Integer::from(1);
+        for factor in &report.factors {
+            product *= &super::parse_decimal(factor).expect("valid factor");
+        }
+        assert_eq!(product, n);
+    }
+
+    #[test]
+    fn siqs_win_records_siqs_with_siqs_rows() {
+        let n = super::parse_decimal("100460333").expect("valid decimal");
+        let options = super::FactorOptions {
+            degree: Some(2),
+            skip_preprocessing: true,
+            threads: Some(2),
+            max_duration: Some(std::time::Duration::from_secs(300)),
+            allow_fallback: false,
+            ..super::FactorOptions::default()
+        };
+        let (outcome, snapshot) = super::factor_with_timings(&n, &options, |_| Ok(()));
+        let report = outcome.expect("SIQS factorization succeeds");
+        assert_eq!(report.method, "siqs");
+        assert!(!report.method.contains("joint"));
+        assert!(!report.method.contains("reclaim"));
+        assert!(
+            report
+                .timings
+                .iter()
+                .any(|entry| entry.stage.starts_with("siqs")),
+            "SIQS stage rows present"
+        );
+        assert_eq!(report.timings.len(), snapshot.len());
+    }
+
+    #[test]
+    fn method_vocab_never_leaks_scheduler_names() {
+        let cases: Vec<(String, super::FactorOptions, String)> = vec![
+            (
+                "3000099".to_string(),
+                super::FactorOptions::default(),
+                "trial_division".to_string(),
+            ),
+            (
+                "97".to_string(),
+                super::FactorOptions::default(),
+                "prime".to_string(),
+            ),
+            (
+                "1000036000099".to_string(),
+                super::FactorOptions::default(),
+                "fermat".to_string(),
+            ),
+            (
+                "17497577401".to_string(),
+                super::FactorOptions {
+                    use_fermat: false,
+                    use_pp1: false,
+                    use_ecm: false,
+                    use_gnfs: false,
+                    allow_fallback: false,
+                    ..super::FactorOptions::default()
+                },
+                "pm1".to_string(),
+            ),
+            (
+                "100460333".to_string(),
+                super::FactorOptions {
+                    degree: Some(2),
+                    skip_preprocessing: true,
+                    threads: Some(2),
+                    max_duration: Some(std::time::Duration::from_secs(300)),
+                    allow_fallback: false,
+                    ..super::FactorOptions::default()
+                },
+                "siqs".to_string(),
+            ),
+        ];
+        let allowed = [
+            "trial_division",
+            "fermat",
+            "pm1",
+            "pp1",
+            "ecm",
+            "prime",
+            "perfect_square",
+            "perfect_power",
+            "siqs",
+            "quadratic-qs",
+            "gnfs",
+            "fallback",
+        ];
+        let scheduler = [
+            "joint",
+            "reclaim",
+            "governor",
+            "cascade_projection",
+            "pilot_rate",
+            "race_pilot",
+            "race_escalation",
+        ];
+        for (decimal, options, expected) in &cases {
+            let n = super::parse_decimal(decimal).expect("valid decimal");
+            let (outcome, _) = super::factor_with_timings(&n, options, |_| Ok(()));
+            let report = outcome.expect("factorization succeeds");
+            assert_eq!(report.method, *expected, "input {decimal}");
+            for part in report.method.split('+') {
+                assert!(
+                    allowed.contains(&part),
+                    "method part {part} outside pre-existing vocabulary on input {decimal}"
+                );
+            }
+            for name in &scheduler {
+                assert!(
+                    !report.method.contains(name),
+                    "scheduler stage {name} leaked into method on input {decimal}"
+                );
+            }
+        }
+        let n = super::parse_decimal("3994424150216394531668178182146365185669")
+            .expect("valid decimal");
+        let (outcome, _) =
+            super::factor_with_timings(&n, &super::FactorOptions::default(), |_| Ok(()));
+        let report = outcome.expect("joint ECM input factors");
+        assert_eq!(report.method, "ecm");
+        for name in &scheduler {
+            assert!(
+                !report.method.contains(name),
+                "scheduler stage {name} leaked into method on joint input"
+            );
+        }
     }
 }
 

@@ -9,7 +9,9 @@ __all__ = [
     "factor",
     "factor_report",
     "factor_with_progress",
+    "is_prime_proof",
     "is_probable_prime",
+    "is_probable_prime_fast",
     "stage_timings",
     "version",
 ]
@@ -148,6 +150,30 @@ def is_probable_prime(n: int) -> bool:
     if n < 0:
         return False
     return bool(_graynfs.is_probable_prime_decimal(str(n)))
+
+
+def is_probable_prime_fast(n: int, rounds: int = 64) -> bool:
+    try:
+        if isinstance(n, bool) or not isinstance(n, int):
+            raise TypeError("n must be an integer")
+        if isinstance(rounds, bool) or not isinstance(rounds, int):
+            raise TypeError("rounds must be an integer")
+        if rounds < 0:
+            raise ValueError("input: rounds must be a non-negative integer")
+        return bool(_graynfs.is_probable_prime_fast_decimal(str(n), rounds))
+    except ValueError as exc:
+        raise _to_gray_error(exc)
+
+
+def is_prime_proof(n: int, method: str = "bpsw") -> bool:
+    try:
+        if isinstance(n, bool) or not isinstance(n, int):
+            raise TypeError("n must be an integer")
+        if not isinstance(method, str):
+            raise TypeError("method must be a string")
+        return bool(_graynfs.is_prime_proof_decimal(str(n), method))
+    except ValueError as exc:
+        raise _to_gray_error(exc)
 
 
 def stage_timings(

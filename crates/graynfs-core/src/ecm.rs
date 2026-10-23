@@ -1128,6 +1128,10 @@ impl EcmReport {
     }
 }
 
+pub(crate) fn ecm_checkpoint(report: &EcmReport) -> (u32, u64) {
+    (report.end_digits, report.end_curve)
+}
+
 pub(crate) fn ecm_factor_report(
     n: &Integer,
     target_digits: u32,

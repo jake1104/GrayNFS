@@ -1,4 +1,4 @@
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
 pub const DEFAULT_MEMORY_BUDGET_BYTES: u64 = 1 << 30;
 pub const MEMORY_BYTES_PER_COLUMN: u64 = 64;
@@ -6,6 +6,19 @@ pub const MEMORY_BYTES_PER_SIEVE_POSITION: u64 = 68;
 pub const MEASURED_LIVE_RATIO_NUM: u64 = 240;
 pub const MEASURED_LIVE_RATIO_DEN: u64 = 100;
 pub const LIVE_BYTES_COVERAGE: u64 = MEASURED_LIVE_RATIO_NUM.div_ceil(MEASURED_LIVE_RATIO_DEN);
+
+pub const PROBE_BUDGET_MIN_MS: f64 = 1_000.0;
+pub const PROBE_BUDGET_MAX_MS: f64 = 3_600_000.0;
+
+pub fn probe_budget_ms_for_bits(bits: u64) -> u128 {
+    let ln_n = (bits as f64 * std::f64::consts::LN_2).max(1.0);
+    let ln_ln_n = ln_n.ln().max(f64::EPSILON);
+    let exponent =
+        ln_n.powf(1.0 / 3.0) * ln_ln_n.powf(2.0 / 3.0) * (64.0_f64 / 9.0).powf(1.0 / 3.0);
+    exponent
+        .exp()
+        .clamp(PROBE_BUDGET_MIN_MS, PROBE_BUDGET_MAX_MS) as u128
+}
 
 pub fn estimate_collect_bytes(columns: usize, half_width: i64, workers: usize) -> u64 {
     let width = half_width.max(0) as u64 * 2 + 1;
@@ -47,6 +60,14 @@ pub fn estimate_live_bytes(
         )
 }
 
+pub fn memory_under_pressure(live_bytes: u64, budget_bytes: u64) -> bool {
+    live_bytes > budget_bytes
+}
+
+pub fn memory_excess_bytes(live_bytes: u64, budget_bytes: u64) -> u64 {
+    live_bytes.saturating_sub(budget_bytes)
+}
+
 pub fn estimate_relation_matrix_megabytes(column_count: usize) -> usize {
     let columns = column_count.max(1);
     let rows = (columns.saturating_mul(3) / 2 + 16).max(16);
@@ -78,6 +99,7 @@ pub struct FactorOptions {
     pub use_pp1: bool,
     pub use_ecm: bool,
     pub use_mpqs: bool,
+    pub use_frobenius: bool,
     pub perf_mode: bool,
 }
 
@@ -106,6 +128,7 @@ impl Default for FactorOptions {
             use_pp1: true,
             use_ecm: true,
             use_mpqs: true,
+            use_frobenius: false,
             perf_mode: false,
         }
     }
@@ -117,6 +140,10 @@ impl FactorOptions {
             Some(mb) => (mb as u64).saturating_mul(1024 * 1024),
             None => DEFAULT_MEMORY_BUDGET_BYTES,
         }
+    }
+
+    pub fn live_excess_bytes(&self, live_bytes: u64) -> u64 {
+        memory_excess_bytes(live_bytes, self.memory_budget_bytes())
     }
 
     pub fn validate(&self) -> Result<(), crate::FactorError> {
@@ -160,6 +187,17 @@ impl FactorOptions {
         self.sieve_a_bound = a;
         self.sieve_b_bound = b;
         self
+    }
+
+    pub fn effective_workers(&self) -> usize {
+        let available = std::thread::available_parallelism()
+            .map(|value| value.get())
+            .unwrap_or(1);
+        self.threads.unwrap_or(available).max(1)
+    }
+
+    pub fn effective_deadline(&self, from: Instant) -> Option<Instant> {
+        self.max_duration.map(|span| from + span)
     }
 }
 
@@ -336,5 +374,17 @@ mod tests {
                 "fraction {fraction} should be accepted"
             );
         }
+    }
+
+    #[test]
+    fn frobenius_flag_defaults_off_and_validates_both_ways() {
+        assert!(!FactorOptions::default().use_frobenius);
+        assert!(FactorOptions::default().validate().is_ok());
+        let enabled = FactorOptions {
+            use_frobenius: true,
+            ..FactorOptions::default()
+        };
+        assert!(enabled.use_frobenius);
+        assert!(enabled.validate().is_ok());
     }
 }
