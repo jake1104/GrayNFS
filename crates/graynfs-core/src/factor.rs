@@ -1025,6 +1025,44 @@ where
     }
 }
 
+fn pilot_error_kind(
+    outcome: &Result<(Integer, GnfsStats, &'static str), FactorError>,
+) -> &'static str {
+    match outcome {
+        Ok(_) => "none",
+        Err(FactorError::ResourceLimit(_)) => "ResourceLimit",
+        Err(FactorError::Cancelled) => "Cancelled",
+        Err(FactorError::InsufficientRelations { .. }) => "InsufficientRelations",
+        Err(FactorError::NoPolynomial) => "NoPolynomial",
+        Err(FactorError::SearchExhausted) => "SearchExhausted",
+        Err(FactorError::AlgebraicSquareRootFailed) => "AlgebraicSquareRootFailed",
+        Err(FactorError::LinearAlgebra(_)) => "LinearAlgebra",
+        Err(FactorError::Factorization(_)) => "Factorization",
+        Err(FactorError::InvalidInput(_)) => "InvalidInput",
+        Err(FactorError::UnsupportedDegree(_)) => "UnsupportedDegree",
+    }
+}
+
+fn note_pilot_for_escalation(
+    best_rated: Option<(usize, f64)>,
+    first_limited: Option<usize>,
+    degree: usize,
+    pilot_yield: Option<usize>,
+    pilot_ms: u128,
+    timed_out: bool,
+) -> (Option<(usize, f64)>, Option<usize>) {
+    let mut best = best_rated;
+    let mut limited = first_limited;
+    if timed_out && limited.is_none() {
+        limited = Some(degree);
+    }
+    if let Some(found) = pilot_yield {
+        let rate = found as f64 / pilot_ms.max(1) as f64;
+        best = better_pilot_pick(best, degree, rate);
+    }
+    (best, limited)
+}
+
 fn better_pilot_pick(
     current: Option<(usize, f64)>,
     degree: usize,
@@ -1035,6 +1073,15 @@ fn better_pilot_pick(
     } else {
         current
     }
+}
+
+fn escalation_pick(
+    best_rated: Option<(usize, f64)>,
+    first_limited: Option<usize>,
+) -> Option<(usize, &'static str, Option<f64>)> {
+    best_rated
+        .map(|(degree, rate)| (degree, "best_rated", Some(rate)))
+        .or(first_limited.map(|degree| (degree, "first_limited", None)))
 }
 
 fn probe_budget(n: &Integer) -> Duration {
@@ -1173,27 +1220,41 @@ where
                 "race_pilot",
                 Some(degree),
                 now,
-                format!("slice_ms={slice_ms} {status}"),
+                format!(
+                    "slice_ms={slice_ms} {status} relations={} err={}",
+                    pilot_yield.map_or("none".to_string(), |found| found.to_string()),
+                    pilot_error_kind(&outcome),
+                ),
             );
         }
         match outcome {
             Ok(result) => return Ok(result),
             Err(FactorError::Cancelled) => return Err(FactorError::Cancelled),
             Err(FactorError::ResourceLimit(_)) => {
-                if first_limited.is_none() {
-                    first_limited = Some(degree);
-                }
-                if let Some(found) = pilot_yield {
-                    let rate = found as f64 / pilot_ms.max(1) as f64;
-                    best_rated = better_pilot_pick(best_rated, degree, rate);
-                }
+                (best_rated, first_limited) = note_pilot_for_escalation(
+                    best_rated,
+                    first_limited,
+                    degree,
+                    pilot_yield,
+                    pilot_ms,
+                    true,
+                );
             }
-            Err(_) => {}
+            Err(_) => {
+                (best_rated, first_limited) = note_pilot_for_escalation(
+                    best_rated,
+                    first_limited,
+                    degree,
+                    pilot_yield,
+                    pilot_ms,
+                    false,
+                );
+            }
         }
     }
-    let escalation = best_rated.map(|(degree, _)| degree).or(first_limited);
+    let escalation = escalation_pick(best_rated, first_limited);
     match escalation {
-        Some(degree) => {
+        Some((degree, pick, rate)) => {
             let started = Instant::now();
             let result = run_degree(
                 n, options, degree, cancelled, deadline, progress, timings, false,
@@ -1204,7 +1265,10 @@ where
                     "race_escalation",
                     Some(degree),
                     started,
-                    format!("full budget {status}"),
+                    format!(
+                        "full budget {status} pick={pick} rate={}",
+                        optional_rate_text(rate)
+                    ),
                 );
             }
             result
@@ -1993,6 +2057,35 @@ mod factor_tests {
                 entry.detail
             );
         }
+    }
+
+    #[test]
+    fn failed_pilot_yield_feeds_escalation_pick() {
+        let (best, limited) = super::note_pilot_for_escalation(None, None, 3, Some(100), 50, false);
+        assert_eq!(best, Some((3, 2.0)));
+        assert_eq!(limited, None);
+        let (best, limited) = super::note_pilot_for_escalation(None, None, 5, None, 50, true);
+        assert_eq!(best, None);
+        assert_eq!(limited, Some(5));
+        let (best, limited) =
+            super::note_pilot_for_escalation(Some((2, 3.0)), Some(5), 3, Some(100), 50, false);
+        assert_eq!(best, Some((2, 3.0)));
+        assert_eq!(limited, Some(5));
+        assert_eq!(
+            super::escalation_pick(Some((3, 2.0)), None),
+            Some((3, "best_rated", Some(2.0)))
+        );
+        assert_eq!(
+            super::escalation_pick(None, Some(5)),
+            Some((5, "first_limited", None))
+        );
+        assert_eq!(
+            super::escalation_pick(Some((2, 3.0)), Some(5)),
+            Some((2, "best_rated", Some(3.0)))
+        );
+        assert_eq!(super::escalation_pick(None, None), None);
+        assert_eq!(super::optional_rate_text(None), "none");
+        assert_eq!(super::optional_rate_text(Some(2.0)), "2.0000");
     }
 
     #[test]

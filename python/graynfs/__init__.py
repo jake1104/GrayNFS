@@ -145,6 +145,7 @@ def factor_with_progress(
 
 
 def is_probable_prime(n: int) -> bool:
+    """BPSW probable-prime gate (deterministic for u64, probable otherwise; not a proof)."""
     if isinstance(n, bool) or not isinstance(n, int):
         raise TypeError("n must be an integer")
     if n < 0:
@@ -153,6 +154,7 @@ def is_probable_prime(n: int) -> bool:
 
 
 def is_probable_prime_fast(n: int, rounds: int = 64) -> bool:
+    """Miller-Rabin fast filter with the given round count; probable only, never a proof."""
     try:
         if isinstance(n, bool) or not isinstance(n, int):
             raise TypeError("n must be an integer")
@@ -165,7 +167,8 @@ def is_probable_prime_fast(n: int, rounds: int = 64) -> bool:
         raise _to_gray_error(exc)
 
 
-def is_prime_proof(n: int, method: str = "bpsw") -> bool:
+def is_prime_proof(n: int, method: str = "aks") -> bool:
+    """Deterministic proof by default (method="aks", 64-bit cap, off the hot factoring path); "bpsw", "frobenius", and "bpsw_frobenius" are probable-only."""
     try:
         if isinstance(n, bool) or not isinstance(n, int):
             raise TypeError("n must be an integer")

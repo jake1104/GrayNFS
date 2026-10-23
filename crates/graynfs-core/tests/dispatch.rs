@@ -135,3 +135,32 @@ fn test_pilot_rate_recorded_in_timings() {
     let rate = pilot_rate(&report).expect("pilot_rate timing entry");
     assert!(rate > 0.0, "expected a positive pilot rate, got {rate}");
 }
+
+#[test]
+fn test_race_pilot_carries_relations_and_error_kind() {
+    let n = parse_decimal("11783510925019").expect("valid 44-bit input");
+    let options = FactorOptions {
+        skip_preprocessing: true,
+        max_duration: Some(Duration::from_secs(30)),
+        ..FactorOptions::default()
+    };
+    let report = factor(&n, &options).expect("factors");
+    let pilots: Vec<_> = report
+        .timings
+        .iter()
+        .filter(|timing| timing.stage == "race_pilot")
+        .collect();
+    assert!(!pilots.is_empty(), "expected race_pilot entries");
+    for pilot in pilots {
+        assert!(
+            pilot.detail.contains("relations="),
+            "race_pilot detail lacks relations: {}",
+            pilot.detail
+        );
+        assert!(
+            pilot.detail.contains("err="),
+            "race_pilot detail lacks err kind: {}",
+            pilot.detail
+        );
+    }
+}

@@ -1,4 +1,4 @@
-# GrayNFS · [![Version](https://img.shields.io/badge/version-v0.2.0-blue.svg)](CHANGELOG.md) [![License: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE.md) [![CI](https://github.com/jake1104/GrayNFS/actions/workflows/ci.yml/badge.svg)](https://github.com/jake1104/GrayNFS/actions/workflows/ci.yml) [![Python](https://img.shields.io/badge/python-3.8%2B-blue.svg)](python/graynfs/__init__.py)
+# GrayNFS · [![Version](https://img.shields.io/badge/version-v0.2.1-blue.svg)](CHANGELOG.md) [![License: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE.md) [![CI](https://github.com/jake1104/GrayNFS/actions/workflows/ci.yml/badge.svg)](https://github.com/jake1104/GrayNFS/actions/workflows/ci.yml) [![Python](https://img.shields.io/badge/python-3.8%2B-blue.svg)](python/graynfs/__init__.py)
 
 Pure-Rust adaptive integer factorization: a GNFS core with a measured cascade to SIQS, ECM, and classical trial methods.
 
@@ -51,7 +51,7 @@ Prerequisites: a Rust stable toolchain plus a C compiler (the default allocator 
 cargo build -p graynfs-cli --release
 .\target\release\graynfs.exe 1000036000099
 python -m maturin build --release --out dist
-python -m pip install --force-reinstall --no-deps dist\graynfs-0.2.0-cp38-abi3-win_amd64.whl
+python -m pip install --force-reinstall --no-deps dist\graynfs-0.2.1-cp38-abi3-win_amd64.whl
 ```
 
 ## Usage
@@ -80,11 +80,11 @@ graynfs.factor(100160063, degree=3)             # [10007, 10009]
 graynfs.factor_report(100160063)["factors"]     # [10007, 10009]
 graynfs.factor_report(100160063)["method"]      # 'fermat'
 graynfs.is_probable_prime(10007)                # True
-graynfs.version()                               # '0.2.0'
+graynfs.version()                               # '0.2.1'
 graynfs.stage_timings(100160063, degree=3)      # [{'stage': 'fermat', ...}]
 ```
 
-All outputs above were verified live against the installed 0.2.0 wheel.
+All outputs above were verified live against the installed 0.2.1 wheel.
 `graynfs.factor` and `graynfs.factor_with_progress` accept `degree: int | None
 = None` (auto-select), `rational_base_bound`, `algebraic_base_bound`,
 `sieve_a_bound`, `sieve_b_bound`, `timeout_seconds` (`None` = no deadline),
@@ -324,6 +324,7 @@ balanced mid-size inputs to the siever or the GNFS degree race, leftovers to
 the Rho fallback. The memory budget is an estimate-based soft guard, not an RSS hard limit.
 The quintic forced-path test covers 27-bit 100160063 only, not larger-input efficiency.
 The 105-bit quarantine stays non-blocking with owner/review recorded.
+Default-path wins on small and medium inputs come from the cascade stages (trial division, Fermat, p-1/p+1, ECM, SIQS); for example, the 61-bit `1155285037654380637` row already records `Fermat 0 ms` on the default route against `1702 ms` on the forced degree-3 GNFS route. Forced degree-3+ GNFS routes are for research and comparison via `--skip-preprocessing --degree d`; the 105-bit hostile cell already records the forced-degree-2 route at `~2.2 s` while the full cascade resolves the same input via ECM in `~205 ms`. The per-stage `race_pilot` (`relations=`/`err=`) and `race_escalation` (`pick=`/`rate=`) timing records show which degree actually contended.
 
 ## Correctness
 
@@ -333,6 +334,7 @@ python -m pytest -q python/tests
 ```
 
 Every bench and every run self-checks the product before reporting success, with final factors product-verified under probabilistic primality.
+BPSW is the default prime gate: deterministic for u64, probable (not a proof) otherwise. Only the opt-in AKS path proves primality, capped at 64 bits and never on the hot factoring path.
 `graynfs-bench --tier random` generates reproducible semiprimes with a seeded
 SplitMix64 generator and verifies every answer:
 
@@ -360,6 +362,21 @@ evidence only. Opt out explicitly:
 ```powershell
 cargo build -p graynfs-cli --release --no-default-features
 ```
+
+## Release notes (v0.2.1 — 2026-10-23)
+
+0.x carries no compatibility promise.
+
+Version-bump release: no factorization-logic change in the bump; all benchmark cells unchanged.
+
+- Release-truth repair: the shipped payload cut its own dated release heading with IDs preserved; manifests already carried the release version.
+- Primality guarantee wording: BPSW is probable, not a proof, with deterministic Miller-Rabin underneath for u64; only the opt-in AKS path proves primality, capped at 64 bits and never on the hot factoring path.
+- Race observability: `race_pilot` records `relations=`/`err=` and `race_escalation` records `pick=`/`rate=`, so the contending degrees stay visible on every run.
+- Measured pilot pruning: zero-yield or SIQS-dominated degree-3+ pilots skip the full-budget escalation on measured signal only; the candidate-degree table is untouched.
+- Limits honesty: default-path wins stay attributed to the cascade stages while forced degree-3+ routes stay research-only; GNFS stays the nominal primary.
+- Scheduler parity evidence: the joint ECM+SIQS driver against the ECM-alone fallback agrees on identical verified factor sets; envelope agreement is machinery validation with no speedup claims.
+- Proof default: `is_prime_proof` defaults to `aks`; over-64-bit inputs refuse cleanly with `False`.
+- Escalation rate wording: the `first_limited` escalation path logs `rate=none` instead of a fabricated zero.
 
 ## Release notes (v0.2.0 — 2026-10-23)
 

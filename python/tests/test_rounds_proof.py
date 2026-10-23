@@ -67,3 +67,15 @@ def test_proof_maps_input_error_category() -> None:
         assert exc.category == "input"
     else:
         raise AssertionError("expected GrayNFSError")
+
+
+def test_proof_default_method_is_aks_proof() -> None:
+    # Default must actually prove: AKS semantics, not BPSW.
+    assert inspect.signature(graynfs.is_prime_proof).parameters["method"].default == "aks"
+    assert graynfs.is_prime_proof(101) is True
+    assert graynfs.is_prime_proof(91) is False
+    # Over-64-bit inputs return clean False under AKS (64-bit cap), never panic/hang.
+    assert graynfs.is_prime_proof(1 << 70) is False
+    # M89 = 2**89 - 1 is prime but above the AKS 64-bit cap, so the
+    # proving default conservatively reports False (BPSW would say True).
+    assert graynfs.is_prime_proof((1 << 89) - 1) is False
