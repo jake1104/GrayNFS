@@ -1,4 +1,4 @@
-# GrayNFS · [![Version](https://img.shields.io/badge/version-v0.1.5-blue.svg)](CHANGELOG.md) [![License: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE.md) [![CI](https://github.com/jake1104/GrayNFS/actions/workflows/ci.yml/badge.svg)](https://github.com/jake1104/GrayNFS/actions/workflows/ci.yml) [![Python](https://img.shields.io/badge/python-3.8%2B-blue.svg)](python/graynfs/__init__.py)
+# GrayNFS · [![Version](https://img.shields.io/badge/version-v0.2.0-blue.svg)](CHANGELOG.md) [![License: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE.md) [![CI](https://github.com/jake1104/GrayNFS/actions/workflows/ci.yml/badge.svg)](https://github.com/jake1104/GrayNFS/actions/workflows/ci.yml) [![Python](https://img.shields.io/badge/python-3.8%2B-blue.svg)](python/graynfs/__init__.py)
 
 Pure-Rust adaptive integer factorization: a GNFS core with a measured cascade to SIQS, ECM, and classical trial methods.
 
@@ -51,7 +51,7 @@ Prerequisites: a Rust stable toolchain plus a C compiler (the default allocator 
 cargo build -p graynfs-cli --release
 .\target\release\graynfs.exe 1000036000099
 python -m maturin build --release --out dist
-python -m pip install --force-reinstall --no-deps dist\graynfs-0.1.5-cp38-abi3-win_amd64.whl
+python -m pip install --force-reinstall --no-deps dist\graynfs-0.2.0-cp38-abi3-win_amd64.whl
 ```
 
 ## Usage
@@ -80,11 +80,11 @@ graynfs.factor(100160063, degree=3)             # [10007, 10009]
 graynfs.factor_report(100160063)["factors"]     # [10007, 10009]
 graynfs.factor_report(100160063)["method"]      # 'fermat'
 graynfs.is_probable_prime(10007)                # True
-graynfs.version()                               # '0.1.5'
+graynfs.version()                               # '0.2.0'
 graynfs.stage_timings(100160063, degree=3)      # [{'stage': 'fermat', ...}]
 ```
 
-All outputs above were verified live against the installed 0.1.5 wheel.
+All outputs above were verified live against the installed 0.2.0 wheel.
 `graynfs.factor` and `graynfs.factor_with_progress` accept `degree: int | None
 = None` (auto-select), `rational_base_bound`, `algebraic_base_bound`,
 `sieve_a_bound`, `sieve_b_bound`, `timeout_seconds` (`None` = no deadline),
@@ -360,6 +360,22 @@ evidence only. Opt out explicitly:
 ```powershell
 cargo build -p graynfs-cli --release --no-default-features
 ```
+
+## Release notes (v0.2.0 — 2026-10-23)
+
+0.x carries no compatibility promise.
+
+Version-bump release: no production code changes; all benchmark cells unchanged.
+
+- Parallel-combination scheduler: ECM and SIQS run under a joint driver with checkpoint resume, so a preempted side resumes instead of restarting.
+- ECM-alone fallback stands at parity where the joint path adds nothing; envelope agreement is machinery validation with no speedup claims.
+- Primality suite: duplicated u64 Miller-Rabin paths unified into one deterministic core with published bases.
+- BPSW (base-2 Miller-Rabin plus strong Lucas) is the default prime gate, with deterministic MR underneath for u64.
+- Fermat and Euler-Solovay checks serve as fast-path filters only: a fail short-circuits to composite, a pass never declares primality.
+- Frobenius test is opt-in and off by default; enabling it only strengthens the gate.
+- AKS is isolated as a proof-only path with a 64-bit cap, off by default and never on the hot factoring path.
+- Rounds tuning and proof requests are split into explicit callables so one cannot enable the other; correctness is locked by a 22-composite plus 20-prime corpus with product verification on every output.
+- Review minors: proof-path GIL detach, total_cmp median ordering, and parameter-order share rename; factoring verdicts unchanged.
 
 ## Release notes (v0.1.5 — 2026-10-20)
 
