@@ -527,6 +527,31 @@ fn toggle_parity_fast(base: &FactorBase, toggles: &SiqsToggleIndex, mask: &mut [
     }
 }
 
+fn strip_prime_u64(
+    rest: &mut u64,
+    prime: u64,
+    base: &FactorBase,
+    toggles: &SiqsToggleIndex,
+    barrett: &SiqsBarrettTable,
+    mask: &mut [u64],
+) {
+    if *rest < prime {
+        return;
+    }
+    let mut exponent = 0_u32;
+    loop {
+        let (quotient, remainder) = barrett.divmod(*rest, prime);
+        if remainder != 0 {
+            break;
+        }
+        *rest = quotient;
+        exponent += 1;
+    }
+    if exponent & 1 != 0 {
+        toggle_parity_fast(base, toggles, mask, prime);
+    }
+}
+
 #[derive(Debug)]
 enum Classify {
     Smooth,
@@ -734,22 +759,7 @@ fn classify_siqs_counted(
             if rest == 1 {
                 break;
             }
-            if rest < *prime {
-                continue;
-            }
-            let mut exponent = 0_u32;
-            // X1c: Barrett divmod (MUL, not DIV) per trial prime.
-            loop {
-                let (quotient, remainder) = barrett.divmod(rest, *prime);
-                if remainder != 0 {
-                    break;
-                }
-                rest = quotient;
-                exponent += 1;
-            }
-            if exponent & 1 != 0 {
-                toggle_parity_fast(base, toggles, mask, *prime);
-            }
+            strip_prime_u64(&mut rest, *prime, base, toggles, barrett, mask);
         }
         let outcome = if rest == 1 {
             Classify::Smooth
@@ -762,14 +772,23 @@ fn classify_siqs_counted(
     }
     let start = Instant::now();
     let mut residual = magnitude;
-    for prime in std::iter::once(&2_u64)
-        .chain(always_trial.iter())
-        .chain(trial_primes.iter())
-    {
+    let prime_at = |index: usize| -> u64 {
+        if index == 0 {
+            2
+        } else if index <= always_trial.len() {
+            always_trial[index - 1]
+        } else {
+            trial_primes[index - 1 - always_trial.len()]
+        }
+    };
+    let total = 1 + always_trial.len() + trial_primes.len();
+    let mut demoted: Option<u64> = None;
+    for index in 0..total {
         if residual == Integer::from(1) {
             break;
         }
-        let prime_value = Integer::from(*prime);
+        let prime = prime_at(index);
+        let prime_value = Integer::from(prime);
         if residual < prime_value {
             continue;
         }
@@ -779,15 +798,37 @@ fn classify_siqs_counted(
             exponent += 1;
         }
         if exponent & 1 != 0 {
-            toggle_parity_fast(base, toggles, mask, *prime);
+            toggle_parity_fast(base, toggles, mask, prime);
+        }
+        if let Some(small) = residual.to_u64() {
+            let mut rest = small;
+            for remaining in (index + 1)..total {
+                if rest == 1 {
+                    break;
+                }
+                strip_prime_u64(&mut rest, prime_at(remaining), base, toggles, barrett, mask);
+            }
+            demoted = Some(rest);
+            break;
         }
     }
-    let outcome = if residual == Integer::from(1) {
-        Classify::Smooth
-    } else {
-        match residual.to_u64() {
-            Some(small) => split_residual_counted(small, splitters, lp_bound, stats),
-            None => Classify::Reject,
+    let outcome = match demoted {
+        Some(rest) => {
+            if rest == 1 {
+                Classify::Smooth
+            } else {
+                split_residual_counted(rest, splitters, lp_bound, stats)
+            }
+        }
+        None => {
+            if residual == Integer::from(1) {
+                Classify::Smooth
+            } else {
+                match residual.to_u64() {
+                    Some(small) => split_residual_counted(small, splitters, lp_bound, stats),
+                    None => Classify::Reject,
+                }
+            }
         }
     };
     stats.classify_bigint_count += 1;
@@ -1592,7 +1633,22 @@ where
         _ => return (None, bank),
     };
     let workers = siqs_worker_count(&working);
-    if siqs_collect_estimate_bytes(columns, half_width, workers) > memory_budget {
+    let pilot_collect_allow =
+        siqs_collect_estimate_bytes(columns, half_width, workers) <= memory_budget;
+    crate::factor::record_memory_shadow(
+        timings,
+        "siqs-pilot-precheck",
+        Some(2),
+        columns,
+        0,
+        0,
+        0,
+        half_width,
+        workers,
+        memory_budget,
+        pilot_collect_allow,
+    );
+    if !pilot_collect_allow {
         return (None, bank);
     }
     let interval_bits = (64 - (half_width as u64).leading_zeros()).max(1);
@@ -1766,6 +1822,19 @@ where
             message: "sieving siqs pilot polynomial".to_string(),
         });
         let live_bytes = estimate_live_bytes(columns, relations.len(), 0, 0);
+        crate::factor::record_memory_shadow(
+            timings,
+            "siqs-pilot-live",
+            Some(2),
+            columns,
+            relations.len(),
+            0,
+            0,
+            half_width,
+            workers,
+            memory_budget,
+            live_bytes <= memory_budget,
+        );
         if live_bytes > memory_budget {
             break 'rounds;
         }
@@ -1786,6 +1855,19 @@ where
         return (None, bank);
     }
     let need_bytes = siqs_rank_estimate_bytes(columns, bank.relations.len());
+    crate::factor::record_memory_shadow(
+        timings,
+        "siqs-pilot-rank",
+        Some(2),
+        columns,
+        bank.relations.len(),
+        0,
+        0,
+        half_width,
+        workers,
+        memory_budget,
+        need_bytes <= memory_budget,
+    );
     if need_bytes > memory_budget {
         return (None, bank);
     }
@@ -1930,7 +2012,22 @@ where
             .max(2);
         let barrett = SiqsBarrettTable::build(barrett_cover);
         let workers = siqs_worker_count(options);
-        if siqs_collect_estimate_bytes(columns, half_width, workers) > memory_budget {
+        let main_collect_allow =
+            siqs_collect_estimate_bytes(columns, half_width, workers) <= memory_budget;
+        crate::factor::record_memory_shadow(
+            timings,
+            "siqs-main-precheck",
+            Some(2),
+            columns,
+            0,
+            0,
+            0,
+            half_width,
+            workers,
+            memory_budget,
+            main_collect_allow,
+        );
+        if !main_collect_allow {
             return Err(FactorError::ResourceLimit(
                 "siqs sieve arrays exceed memory budget".to_string(),
             ));
@@ -2072,7 +2169,21 @@ where
                 message: "sieving siqs polynomials".to_string(),
             })?;
             let live_bytes = estimate_live_bytes(columns, relations.len(), 0, 0);
-            if live_bytes > memory_budget {
+            let main_live_allow = live_bytes <= memory_budget;
+            crate::factor::record_memory_shadow(
+                timings,
+                "siqs-main-live",
+                Some(2),
+                columns,
+                relations.len(),
+                0,
+                0,
+                half_width,
+                workers,
+                memory_budget,
+                main_live_allow,
+            );
+            if !main_live_allow {
                 return Err(FactorError::ResourceLimit(format!(
                     "relation collection exceeded the memory budget of {} MiB (live estimate {} MiB)",
                     memory_budget.div_ceil(1024 * 1024),
@@ -2141,6 +2252,19 @@ where
             continue;
         }
         let need_bytes = siqs_rank_estimate_bytes(columns, relations.len());
+        crate::factor::record_memory_shadow(
+            timings,
+            "siqs-main-rank",
+            Some(2),
+            columns,
+            relations.len(),
+            0,
+            0,
+            half_width,
+            workers,
+            memory_budget,
+            need_bytes <= memory_budget,
+        );
         if need_bytes > memory_budget {
             return Err(FactorError::ResourceLimit(format!(
                 "the relation matrix total would need about {} MiB, above the memory budget of {} MiB",
@@ -2694,6 +2818,152 @@ mod siqs_tests {
         }
         assert!(total_checked > 500, "need multi-poly coverage");
         assert_eq!(total_disagreements, 0, "hit vs full-base mismatch");
+    }
+
+    #[cfg(test)]
+    fn classify_siqs_bigint_oracle(
+        signed: &Integer,
+        base: &FactorBase,
+        mask: &mut [u64],
+        lp_bound: u64,
+        trial_primes: &[u64],
+        always_trial: &[u64],
+        splitters: &[u64],
+    ) -> Classify {
+        if signed == &Integer::from(0) {
+            return Classify::Reject;
+        }
+        let toggles = SiqsToggleIndex::build(base);
+        let negative = signed < &Integer::from(0);
+        if negative {
+            mask[base.sign_column / 64] ^= 1_u64 << (base.sign_column % 64);
+        }
+        let magnitude = if negative {
+            -signed.clone()
+        } else {
+            signed.clone()
+        };
+        if magnitude.to_u64().is_some() {
+            panic!("oracle pair must enter the BigInt arm");
+        }
+        let mut residual = magnitude;
+        for prime in std::iter::once(&2_u64)
+            .chain(always_trial.iter())
+            .chain(trial_primes.iter())
+        {
+            if residual == Integer::from(1) {
+                break;
+            }
+            let prime_value = Integer::from(*prime);
+            if residual < prime_value {
+                continue;
+            }
+            let mut exponent = 0_u32;
+            while (&residual % &prime_value) == Integer::from(0) {
+                residual /= &prime_value;
+                exponent += 1;
+            }
+            if exponent & 1 != 0 {
+                toggle_parity_fast(base, &toggles, mask, *prime);
+            }
+        }
+        if residual == Integer::from(1) {
+            return Classify::Smooth;
+        }
+        match residual.to_u64() {
+            Some(small) => {
+                let mut discard = SiqsPolyCounters::default();
+                split_residual_counted(small, splitters, lp_bound, &mut discard)
+            }
+            None => Classify::Reject,
+        }
+    }
+
+    #[test]
+    fn demoted_classify_matches_bigint_oracle() {
+        let same_outcome = |left: &Classify, right: &Classify| -> bool {
+            match (left, right) {
+                (Classify::Smooth, Classify::Smooth) => true,
+                (Classify::Partial(a), Classify::Partial(b)) => a == b,
+                (Classify::Partial2(a, b), Classify::Partial2(c, d)) => a == c && b == d,
+                (Classify::Reject, Classify::Reject) => true,
+                _ => false,
+            }
+        };
+        let n = Integer::from(100160063);
+        let base = FactorBase::for_siqs(&n, 2000, 2000);
+        let words = base.column_count().div_ceil(64);
+        let splitters = splitter_primes(&base, 50_000);
+        let big: Integer = Integer::from(1) << 70_u64;
+        let over = (Integer::from(1) << 65_u64) + Integer::from(165);
+        let pairs: Vec<(Integer, Vec<u64>, Vec<u64>)> = vec![
+            (big.clone() * Integer::from(15), vec![3, 5, 999_983], vec![]),
+            (
+                (Integer::from(1) << 80_u64) * Integer::from(3 * 10_007),
+                vec![2, 3, 5],
+                vec![],
+            ),
+            (
+                big.clone() * Integer::from(10_007 * 10_009),
+                vec![2, 3],
+                vec![],
+            ),
+            (
+                big.clone() * Integer::from(10_007 * 10_009) * Integer::from(10_037),
+                vec![2, 3],
+                vec![],
+            ),
+            (
+                big.clone() * Integer::from(1_000_003) * Integer::from(1_000_033),
+                vec![2, 3, 5],
+                vec![],
+            ),
+            (
+                -((Integer::from(1) << 80_u64) * Integer::from(3 * 10_007)),
+                vec![2, 3, 5],
+                vec![],
+            ),
+            (over * Integer::from(3), vec![3, 5, 7], vec![]),
+            (
+                (Integer::from(1) << 61_u64) * Integer::from(15),
+                vec![3, 5, 999_983],
+                vec![],
+            ),
+        ];
+        assert!(!pairs.is_empty());
+        for (signed, trial, always) in &pairs {
+            let mut mask_got = vec![0_u64; words];
+            let got = classify_siqs(
+                signed,
+                &base,
+                &mut mask_got,
+                50_000,
+                trial,
+                always,
+                &splitters,
+            );
+            let mut mask_want = vec![0_u64; words];
+            let want = classify_siqs_bigint_oracle(
+                signed,
+                &base,
+                &mut mask_want,
+                50_000,
+                trial,
+                always,
+                &splitters,
+            );
+            assert!(
+                same_outcome(&got, &want),
+                "outcome drift signed-bits={} got={got:?} want={want:?}",
+                signed.bits()
+            );
+            assert_eq!(mask_got, mask_want, "mask drift");
+        }
+        let entry = (Integer::from(1) << 61_u64) * Integer::from(15);
+        assert!(entry.to_u64().is_none());
+        let shrunk = &entry / Integer::from(1_u64 << 61);
+        assert_eq!(shrunk, Integer::from(15));
+        assert!(shrunk.to_u64().is_some());
     }
 
     #[test]

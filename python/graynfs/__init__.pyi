@@ -26,6 +26,10 @@ def factor(
     use_mpqs: bool = ...,
     threads: int | None = ...,
     perf_mode: bool = ...,
+    skip_preprocessing: bool = ...,
+    large_prime_bound: int = ...,
+    enable_double_large_primes: bool = ...,
+    seed: int | None = ...,
 ) -> list[int]: ...
 def factor_with_progress(
     n: int,
@@ -47,6 +51,10 @@ def factor_with_progress(
     use_mpqs: bool = ...,
     threads: int | None = ...,
     perf_mode: bool = ...,
+    skip_preprocessing: bool = ...,
+    large_prime_bound: int = ...,
+    enable_double_large_primes: bool = ...,
+    seed: int | None = ...,
 ) -> list[int]: ...
 def stage_timings(
     n: int,
@@ -67,6 +75,10 @@ def stage_timings(
     use_mpqs: bool = ...,
     threads: int | None = ...,
     perf_mode: bool = ...,
+    skip_preprocessing: bool = ...,
+    large_prime_bound: int = ...,
+    enable_double_large_primes: bool = ...,
+    seed: int | None = ...,
 ) -> list[dict[str, Any]]: ...
 def is_probable_prime(n: int) -> bool: ...
 def is_probable_prime_fast(n: int, rounds: int = ...) -> bool: ...
@@ -90,5 +102,34 @@ def factor_report(
     use_mpqs: bool = ...,
     threads: int | None = ...,
     perf_mode: bool = ...,
+    skip_preprocessing: bool = ...,
+    large_prime_bound: int = ...,
+    enable_double_large_primes: bool = ...,
+    seed: int | None = ...,
 ) -> dict[str, Any]: ...
 def version() -> str: ...
+def factor_batch(
+    ns: list[int],
+    *,
+    fail_fast: bool = ...,
+    degree: int | None = ...,
+    rational_base_bound: int = ...,
+    algebraic_base_bound: int = ...,
+    sieve_a_bound: int = ...,
+    sieve_b_bound: int = ...,
+    timeout_seconds: int | None = ...,
+    max_memory_mb: int | None = ...,
+    allow_fallback: bool = ...,
+    use_fermat: bool = ...,
+    use_squfof: bool = ...,
+    use_pm1: bool = ...,
+    use_pp1: bool = ...,
+    use_ecm: bool = ...,
+    use_mpqs: bool = ...,
+    threads: int | None = ...,
+    perf_mode: bool = ...,
+    skip_preprocessing: bool = ...,
+    large_prime_bound: int = ...,
+    enable_double_large_primes: bool = ...,
+    seed: int | None = ...,
+) -> list[list[int] | GrayNFSError]: ...

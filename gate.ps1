@@ -84,6 +84,7 @@ if ($Full) {
   } else {
     Invoke-GateStep "gnfs-degrees" { cargo test --release -p graynfs-core --test core -- --ignored cubic_gnfs quartic_gnfs quintic_gnfs wide_gnfs }
   }
+  Invoke-GateStep "perf-smoke" { python scripts/perf_smoke.py }
 }
 
 "gate PASS" | Add-Content -Path $summaryFile

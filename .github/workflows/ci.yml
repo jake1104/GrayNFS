@@ -81,3 +81,7 @@ jobs:
       # wide_gnfs expects siqs (default-race routing); name kept, no rename.
       - name: gnfs-degrees-release
         run: cargo nextest run --release -p graynfs-core --run-ignored=only -E 'test(cubic_gnfs) + test(quartic_gnfs) + test(quintic_gnfs) + test(wide_gnfs)'
+      - name: perf-smoke
+        run: |
+          cargo build -p graynfs-cli --release
+          python scripts/perf_smoke.py

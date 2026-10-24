@@ -4,7 +4,7 @@ version.workspace = true
 edition.workspace = true
 license.workspace = true
 authors.workspace = true
-description = "A high-performance general number field sieve implementation"
+description = "Adaptive integer factorization engine (cascade + SIQS + GNFS)"
 
 [dependencies]
 num-bigint.workspace = true

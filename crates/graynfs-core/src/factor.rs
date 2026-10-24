@@ -130,6 +130,39 @@ impl TimingCollector {
     }
 }
 
+#[allow(clippy::too_many_arguments)]
+pub(crate) fn record_memory_shadow(
+    collector: Option<&TimingCollector>,
+    site: &str,
+    degree: Option<usize>,
+    columns: usize,
+    relations: usize,
+    partial_singles: usize,
+    partial_doubles: usize,
+    max_a: i64,
+    workers: usize,
+    budget: u64,
+    verdict_allow: bool,
+) {
+    let Some(collector) = collector else {
+        return;
+    };
+    let collect = crate::options::estimate_collect_bytes(columns, max_a, workers);
+    let rank = crate::options::estimate_rank_bytes(columns, relations);
+    let total = crate::options::estimate_total_bytes(columns, relations);
+    let live =
+        crate::options::estimate_live_bytes(columns, relations, partial_singles, partial_doubles);
+    let verdict = if verdict_allow { "allow" } else { "reject" };
+    collector.record_elapsed(
+        "memory_shadow",
+        degree,
+        0,
+        format!(
+            "site={site} columns={columns} relations={relations} singles={partial_singles} doubles={partial_doubles} max_a={max_a} workers={workers} collect={collect} rank={rank} total={total} live={live} budget={budget} verdict={verdict}"
+        ),
+    );
+}
+
 pub(crate) struct Timer<'a> {
     collector: Option<&'a TimingCollector>,
     stage: &'static str,
@@ -1002,7 +1035,7 @@ where
     if degree == 2 {
         quadratic_divisor(n, &attempt, cancelled, deadline, progress, timings, pilot)
     } else {
-        match general::gnfs_divisor(n, &attempt, cancelled, deadline) {
+        match general::gnfs_divisor(n, &attempt, cancelled, deadline, timings) {
             Ok((divisor, polynomial, relations, rank, entries)) => {
                 if let Some(collector) = timings {
                     collector.merge(entries);
@@ -1043,44 +1076,66 @@ fn pilot_error_kind(
     }
 }
 
+type RatedPilot = (usize, f64, Option<u128>);
+
+#[allow(clippy::too_many_arguments)]
 fn note_pilot_for_escalation(
-    best_rated: Option<(usize, f64)>,
+    best_rated: Option<RatedPilot>,
     first_limited: Option<usize>,
     degree: usize,
     pilot_yield: Option<usize>,
     pilot_ms: u128,
     timed_out: bool,
-) -> (Option<(usize, f64)>, Option<usize>) {
+    relations_needed: Option<usize>,
+    remaining_ms: u128,
+) -> (Option<RatedPilot>, Option<usize>) {
     let mut best = best_rated;
     let mut limited = first_limited;
-    if timed_out && limited.is_none() {
+    let rate = pilot_yield.map(|found| found as f64 / pilot_ms.max(1) as f64);
+    let projected = match (relations_needed, rate) {
+        (Some(needed), Some(rate)) => crate::cascade::project_siqs_cost_ms(needed, rate),
+        _ => None,
+    };
+    let affordable = projected.is_none_or(|cost| cost <= remaining_ms);
+    if timed_out && limited.is_none() && pilot_yield != Some(0) && affordable {
         limited = Some(degree);
     }
-    if let Some(found) = pilot_yield {
-        let rate = found as f64 / pilot_ms.max(1) as f64;
-        best = better_pilot_pick(best, degree, rate);
+    if let Some(rate) = rate {
+        best = better_pilot_pick(best, degree, rate, projected, remaining_ms);
     }
     (best, limited)
 }
 
 fn better_pilot_pick(
-    current: Option<(usize, f64)>,
+    current: Option<RatedPilot>,
     degree: usize,
     rate: f64,
-) -> Option<(usize, f64)> {
-    if rate > 0.0 && current.is_none_or(|(_, best)| rate > best) {
-        Some((degree, rate))
+    projected_cost_ms: Option<u128>,
+    remaining_ms: u128,
+) -> Option<RatedPilot> {
+    if rate <= 0.0 {
+        return current;
+    }
+    if projected_cost_ms.is_some_and(|cost| cost > remaining_ms) {
+        return current;
+    }
+    let cheaper = match (current, projected_cost_ms) {
+        (Some((_, _, Some(best))), Some(cost)) => cost < best,
+        _ => current.is_none_or(|(_, best, _)| rate > best),
+    };
+    if cheaper {
+        Some((degree, rate, projected_cost_ms))
     } else {
         current
     }
 }
 
 fn escalation_pick(
-    best_rated: Option<(usize, f64)>,
+    best_rated: Option<RatedPilot>,
     first_limited: Option<usize>,
 ) -> Option<(usize, &'static str, Option<f64>)> {
     best_rated
-        .map(|(degree, rate)| (degree, "best_rated", Some(rate)))
+        .map(|(degree, rate, _)| (degree, "best_rated", Some(rate)))
         .or(first_limited.map(|degree| (degree, "first_limited", None)))
 }
 
@@ -1125,7 +1180,7 @@ where
     let fraction = options.degree_race_fraction.clamp(0.05, 0.5);
     let bound = deadline.unwrap_or_else(|| Instant::now() + probe_budget(n));
     let mut first_limited: Option<usize> = None;
-    let mut best_rated: Option<(usize, f64)> = None;
+    let mut best_rated: Option<RatedPilot> = None;
     for &degree in candidates.iter() {
         if cancelled.load(Ordering::Relaxed) {
             return Err(FactorError::Cancelled);
@@ -1153,6 +1208,10 @@ where
             Err(FactorError::InsufficientRelations { found, .. }) => Some(*found),
             _ => None,
         };
+        let relations_needed = match &outcome {
+            Err(FactorError::InsufficientRelations { required, .. }) => Some(*required),
+            _ => None,
+        };
         if let Some(found) = pilot_yield {
             let rate = found as f64 / pilot_ms.max(1) as f64;
             if let Some(collector) = timings {
@@ -1172,10 +1231,6 @@ where
             }
         }
         if let Some(collector) = timings {
-            let relations_needed = match &outcome {
-                Err(FactorError::InsufficientRelations { required, .. }) => Some(*required),
-                _ => None,
-            };
             let pilot_rate = pilot_yield.map(|found| found as f64 / pilot_ms.max(1) as f64);
             let cost_ecm_ms = crate::cascade::project_ecm_cost_ms(signals);
             let cost_ecm_next_ms = crate::cascade::project_ecm_cost_ms_for_digits(
@@ -1238,6 +1293,8 @@ where
                     pilot_yield,
                     pilot_ms,
                     true,
+                    relations_needed,
+                    bound.saturating_duration_since(Instant::now()).as_millis(),
                 );
             }
             Err(_) => {
@@ -1248,6 +1305,8 @@ where
                     pilot_yield,
                     pilot_ms,
                     false,
+                    relations_needed,
+                    bound.saturating_duration_since(Instant::now()).as_millis(),
                 );
             }
         }
@@ -1951,11 +2010,23 @@ mod factor_tests {
 
     #[test]
     fn pilot_pick_prefers_measured_rate() {
-        assert_eq!(better_pilot_pick(None, 2, 0.0), None);
-        assert_eq!(better_pilot_pick(None, 2, 1.5), Some((2, 1.5)));
-        assert_eq!(better_pilot_pick(Some((2, 1.5)), 3, 1.5), Some((2, 1.5)));
-        assert_eq!(better_pilot_pick(Some((2, 1.5)), 3, 2.5), Some((3, 2.5)));
-        assert_eq!(better_pilot_pick(Some((3, 2.5)), 4, 1.0), Some((3, 2.5)));
+        assert_eq!(better_pilot_pick(None, 2, 0.0, None, 60_000), None);
+        assert_eq!(
+            better_pilot_pick(None, 2, 1.5, None, 60_000),
+            Some((2, 1.5, None))
+        );
+        assert_eq!(
+            better_pilot_pick(Some((2, 1.5, None)), 3, 1.5, None, 60_000),
+            Some((2, 1.5, None))
+        );
+        assert_eq!(
+            better_pilot_pick(Some((2, 1.5, None)), 3, 2.5, None, 60_000),
+            Some((3, 2.5, None))
+        );
+        assert_eq!(
+            better_pilot_pick(Some((3, 2.5, None)), 4, 1.0, None, 60_000),
+            Some((3, 2.5, None))
+        );
     }
 
     #[test]
@@ -2061,18 +2132,36 @@ mod factor_tests {
 
     #[test]
     fn failed_pilot_yield_feeds_escalation_pick() {
-        let (best, limited) = super::note_pilot_for_escalation(None, None, 3, Some(100), 50, false);
-        assert_eq!(best, Some((3, 2.0)));
+        let (best, limited) = super::note_pilot_for_escalation(
+            None,
+            None,
+            3,
+            Some(100),
+            50,
+            false,
+            Some(400),
+            60_000,
+        );
+        assert_eq!(best, Some((3, 2.0, Some(200))));
         assert_eq!(limited, None);
-        let (best, limited) = super::note_pilot_for_escalation(None, None, 5, None, 50, true);
+        let (best, limited) =
+            super::note_pilot_for_escalation(None, None, 5, None, 50, true, None, 60_000);
         assert_eq!(best, None);
         assert_eq!(limited, Some(5));
-        let (best, limited) =
-            super::note_pilot_for_escalation(Some((2, 3.0)), Some(5), 3, Some(100), 50, false);
-        assert_eq!(best, Some((2, 3.0)));
+        let (best, limited) = super::note_pilot_for_escalation(
+            Some((2, 3.0, None)),
+            Some(5),
+            3,
+            Some(100),
+            50,
+            false,
+            None,
+            60_000,
+        );
+        assert_eq!(best, Some((2, 3.0, None)));
         assert_eq!(limited, Some(5));
         assert_eq!(
-            super::escalation_pick(Some((3, 2.0)), None),
+            super::escalation_pick(Some((3, 2.0, Some(200))), None),
             Some((3, "best_rated", Some(2.0)))
         );
         assert_eq!(
@@ -2080,12 +2169,57 @@ mod factor_tests {
             Some((5, "first_limited", None))
         );
         assert_eq!(
-            super::escalation_pick(Some((2, 3.0)), Some(5)),
+            super::escalation_pick(Some((2, 3.0, None)), Some(5)),
             Some((2, "best_rated", Some(3.0)))
         );
         assert_eq!(super::escalation_pick(None, None), None);
         assert_eq!(super::optional_rate_text(None), "none");
         assert_eq!(super::optional_rate_text(Some(2.0)), "2.0000");
+    }
+
+    #[test]
+    fn pilot_cost_link_skips_dominated_escalation() {
+        let (best, limited) =
+            super::note_pilot_for_escalation(None, None, 3, Some(0), 50, false, Some(500), 60_000);
+        assert_eq!(best, None);
+        assert_eq!(limited, None);
+        let (best, limited) =
+            super::note_pilot_for_escalation(None, None, 3, Some(0), 50, true, Some(500), 60_000);
+        assert_eq!(best, None);
+        assert_eq!(limited, None);
+        assert_eq!(super::escalation_pick(best, limited), None);
+        let (best, limited) = super::note_pilot_for_escalation(
+            None,
+            None,
+            3,
+            Some(100),
+            50,
+            false,
+            Some(400),
+            60_000,
+        );
+        assert_eq!(best, Some((3, 2.0, Some(200))));
+        let (best, limited) = super::note_pilot_for_escalation(
+            best,
+            limited,
+            2,
+            Some(300),
+            50,
+            false,
+            Some(300),
+            60_000,
+        );
+        assert_eq!(best, Some((2, 6.0, Some(50))));
+        assert_eq!(limited, None);
+        assert_eq!(
+            super::escalation_pick(best, limited),
+            Some((2, "best_rated", Some(6.0)))
+        );
+        let (best, limited) =
+            super::note_pilot_for_escalation(None, None, 4, Some(100), 50, false, Some(400), 100);
+        assert_eq!(best, None);
+        assert_eq!(limited, None);
+        assert_eq!(super::escalation_pick(best, limited), None);
     }
 
     #[test]

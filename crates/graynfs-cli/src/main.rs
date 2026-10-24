@@ -42,6 +42,11 @@ struct Cli {
     large_prime_bound: usize,
     #[arg(
         long,
+        help = "Seed for the deterministic RNG (default 0x9e3779b97f4a7c15)"
+    )]
+    seed: Option<u64>,
+    #[arg(
+        long,
         default_value_t = 60,
         help = "Overall budget in seconds; on expiry the run ends with a clean ResourceLimit"
     )]
@@ -104,6 +109,7 @@ fn options_from_cli(cli: &Cli) -> FactorOptions {
         sieve_a_bound: cli.sieve_a_bound,
         sieve_b_bound: cli.sieve_b_bound,
         large_prime_bound: cli.large_prime_bound,
+        seed: cli.seed.unwrap_or(FactorOptions::default().seed),
         max_duration: Some(std::time::Duration::from_secs(cli.timeout_seconds)),
         max_memory_mb: cli.max_memory_mb,
         allow_fallback: !cli.no_fallback,
@@ -127,7 +133,7 @@ fn main() -> ExitCode {
         Ok(value) => value,
         Err(error) => {
             if cli.json {
-                print_json(&json_error_value(&error));
+                print_json(&json_error_value(&error, None));
             } else {
                 report_error(&error);
             }
@@ -168,7 +174,8 @@ fn main() -> ExitCode {
         }
         Err(error) => {
             if cli.json {
-                print_json(&json_error_value(&error));
+                let selected = cli.timings.then_some(timings.as_slice());
+                print_json(&json_error_value(&error, selected));
             } else {
                 if cli.timings {
                     print_timings(&timings);
@@ -191,6 +198,22 @@ fn format_progress(event: &ProgressEvent) -> String {
     )
 }
 
+fn timings_json(entries: &[StageTiming]) -> serde_json::Value {
+    serde_json::Value::Array(
+        entries
+            .iter()
+            .map(|entry| {
+                serde_json::json!({
+                    "stage": entry.stage,
+                    "degree": entry.degree,
+                    "elapsed_ms": entry.elapsed_ms,
+                    "detail": entry.detail,
+                })
+            })
+            .collect::<Vec<_>>(),
+    )
+}
+
 fn json_report_value(report: &FactorReport, timings: Option<&[StageTiming]>) -> serde_json::Value {
     let mut value = serde_json::json!({
         "input": report.input,
@@ -202,30 +225,23 @@ fn json_report_value(report: &FactorReport, timings: Option<&[StageTiming]>) -> 
         "elapsed_ms": report.elapsed_ms,
     });
     if let Some(entries) = timings {
-        let array = entries
-            .iter()
-            .map(|entry| {
-                serde_json::json!({
-                    "stage": entry.stage,
-                    "degree": entry.degree,
-                    "elapsed_ms": entry.elapsed_ms,
-                    "detail": entry.detail,
-                })
-            })
-            .collect::<Vec<_>>();
-        value["timings"] = serde_json::Value::Array(array);
+        value["timings"] = timings_json(entries);
     }
     value
 }
 
-fn json_error_value(error: &FactorError) -> serde_json::Value {
+fn json_error_value(error: &FactorError, timings: Option<&[StageTiming]>) -> serde_json::Value {
     let (category, detail) = error_parts(error);
-    serde_json::json!({
+    let mut value = serde_json::json!({
         "error": {
             "category": category,
             "detail": detail,
         }
-    })
+    });
+    if let Some(entries) = timings {
+        value["timings"] = timings_json(entries);
+    }
+    value
 }
 
 fn print_timings(entries: &[StageTiming]) {
@@ -367,9 +383,27 @@ mod tests {
 
     #[test]
     fn json_error_carries_category_and_detail() {
-        let value = json_error_value(&FactorError::ResourceLimit("deadline".to_string()));
+        let value = json_error_value(&FactorError::ResourceLimit("deadline".to_string()), None);
         assert_eq!(value["error"]["category"], "resource-limit");
         assert_eq!(value["error"]["detail"], "deadline");
+        assert!(value.get("timings").is_none());
+    }
+
+    #[test]
+    fn json_error_includes_timings_only_when_requested() {
+        let error = FactorError::ResourceLimit("deadline".to_string());
+        let entries = vec![StageTiming {
+            stage: "memory_shadow".to_string(),
+            degree: Some(3),
+            elapsed_ms: 0,
+            detail: "site=general-collect-precheck verdict=reject".to_string(),
+        }];
+        let with = json_error_value(&error, Some(entries.as_slice()));
+        let timings = with["timings"].as_array().expect("timings array");
+        assert_eq!(timings.len(), 1);
+        assert_eq!(timings[0]["stage"], "memory_shadow");
+        let without = json_error_value(&error, None);
+        assert!(without.get("timings").is_none());
     }
 
     #[test]
@@ -426,7 +460,7 @@ mod tests {
             (FactorError::NoPolynomial, "internal"),
         ];
         for (error, category) in &cases {
-            let value = json_error_value(error);
+            let value = json_error_value(error, None);
             assert_eq!(value["error"]["category"], *category);
             assert!(value["error"]["detail"].is_string());
             assert!(value.get("input").is_none());
@@ -470,6 +504,17 @@ mod tests {
             format_progress(&event),
             "progress: stage=collect current=12 total=200 message=sieving the quadratic base"
         );
+    }
+
+    #[test]
+    fn cli_parses_seed_default_absent_and_explicit_round_trip() {
+        let bare = Cli::try_parse_from(["graynfs", "100160063"]).expect("parse without seed");
+        assert_eq!(bare.seed, None);
+        assert_eq!(options_from_cli(&bare).seed, FactorOptions::default().seed);
+        let flagged = Cli::try_parse_from(["graynfs", "100160063", "--seed", "111"])
+            .expect("parse with seed");
+        assert_eq!(flagged.seed, Some(111));
+        assert_eq!(options_from_cli(&flagged).seed, 111);
     }
 
     #[test]

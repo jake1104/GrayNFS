@@ -7,6 +7,7 @@ from . import _graynfs
 __all__ = [
     "GrayNFSError",
     "factor",
+    "factor_batch",
     "factor_report",
     "factor_with_progress",
     "is_prime_proof",
@@ -46,6 +47,15 @@ def _validate_number(value: int) -> str:
     return str(value)
 
 
+def _validate_seed(seed: int | None) -> None:
+    if seed is None:
+        return
+    if isinstance(seed, bool) or not isinstance(seed, int):
+        raise TypeError("seed must be an integer or None")
+    if seed < 0:
+        raise ValueError("input: seed must be a non-negative integer")
+
+
 def factor(
     n: int,
     *,
@@ -65,8 +75,13 @@ def factor(
     use_mpqs: bool = True,
     threads: int | None = None,
     perf_mode: bool = False,
+    skip_preprocessing: bool = False,
+    large_prime_bound: int = 50000,
+    enable_double_large_primes: bool = False,
+    seed: int | None = None,
 ) -> list[int]:
     try:
+        _validate_seed(seed)
         return [
             int(value)
             for value in _graynfs.factor_decimal(
@@ -87,6 +102,10 @@ def factor(
                 use_mpqs,
                 threads,
                 perf_mode,
+                skip_preprocessing,
+                large_prime_bound,
+                enable_double_large_primes,
+                seed,
             )
         ]
     except ValueError as exc:
@@ -113,10 +132,15 @@ def factor_with_progress(
     use_mpqs: bool = True,
     threads: int | None = None,
     perf_mode: bool = False,
+    skip_preprocessing: bool = False,
+    large_prime_bound: int = 50000,
+    enable_double_large_primes: bool = False,
+    seed: int | None = None,
 ) -> list[int]:
     if not callable(callback):
         raise TypeError("callback must be callable")
     try:
+        _validate_seed(seed)
         return [
             int(value)
             for value in _graynfs.factor_with_progress_decimal(
@@ -138,6 +162,10 @@ def factor_with_progress(
                 use_mpqs,
                 threads,
                 perf_mode,
+                skip_preprocessing,
+                large_prime_bound,
+                enable_double_large_primes,
+                seed,
             )
         ]
     except ValueError as exc:
@@ -168,7 +196,7 @@ def is_probable_prime_fast(n: int, rounds: int = 64) -> bool:
 
 
 def is_prime_proof(n: int, method: str = "aks") -> bool:
-    """Deterministic proof by default (method="aks", 64-bit cap, off the hot factoring path); "bpsw", "frobenius", and "bpsw_frobenius" are probable-only."""
+    """Deterministic proof by default (method="aks", 64-bit cap, off the hot factoring path); "bpsw", "frobenius", and "bpsw_frobenius" are probable-only (probable, not a proof); over-64-bit False means unproven, not composite."""
     try:
         if isinstance(n, bool) or not isinstance(n, int):
             raise TypeError("n must be an integer")
@@ -198,8 +226,13 @@ def stage_timings(
     use_mpqs: bool = True,
     threads: int | None = None,
     perf_mode: bool = False,
+    skip_preprocessing: bool = False,
+    large_prime_bound: int = 50000,
+    enable_double_large_primes: bool = False,
+    seed: int | None = None,
 ) -> list[dict[str, Any]]:
     try:
+        _validate_seed(seed)
         return [
             {
                 "stage": str(entry["stage"]),
@@ -225,6 +258,10 @@ def stage_timings(
                 use_mpqs,
                 threads,
                 perf_mode,
+                skip_preprocessing,
+                large_prime_bound,
+                enable_double_large_primes,
+                seed,
             )
         ]
     except ValueError as exc:
@@ -233,6 +270,66 @@ def stage_timings(
 
 def version() -> str:
     return str(_graynfs.version())
+
+
+def factor_batch(
+    ns: list[int],
+    *,
+    fail_fast: bool = True,
+    degree: int | None = None,
+    rational_base_bound: int = 2000,
+    algebraic_base_bound: int = 2000,
+    sieve_a_bound: int = 700,
+    sieve_b_bound: int = 120,
+    timeout_seconds: int | None = None,
+    max_memory_mb: int | None = None,
+    allow_fallback: bool = True,
+    use_fermat: bool = True,
+    use_squfof: bool = True,
+    use_pm1: bool = True,
+    use_pp1: bool = True,
+    use_ecm: bool = True,
+    use_mpqs: bool = True,
+    threads: int | None = None,
+    perf_mode: bool = False,
+    skip_preprocessing: bool = False,
+    large_prime_bound: int = 50000,
+    enable_double_large_primes: bool = False,
+    seed: int | None = None,
+) -> list[list[int] | GrayNFSError]:
+    results: list[list[int] | GrayNFSError] = []
+    for value in ns:
+        try:
+            results.append(
+                factor(
+                    value,
+                    degree=degree,
+                    rational_base_bound=rational_base_bound,
+                    algebraic_base_bound=algebraic_base_bound,
+                    sieve_a_bound=sieve_a_bound,
+                    sieve_b_bound=sieve_b_bound,
+                    timeout_seconds=timeout_seconds,
+                    max_memory_mb=max_memory_mb,
+                    allow_fallback=allow_fallback,
+                    use_fermat=use_fermat,
+                    use_squfof=use_squfof,
+                    use_pm1=use_pm1,
+                    use_pp1=use_pp1,
+                    use_ecm=use_ecm,
+                    use_mpqs=use_mpqs,
+                    threads=threads,
+                    perf_mode=perf_mode,
+                    skip_preprocessing=skip_preprocessing,
+                    large_prime_bound=large_prime_bound,
+                    enable_double_large_primes=enable_double_large_primes,
+                    seed=seed,
+                )
+            )
+        except GrayNFSError as exc:
+            if fail_fast:
+                raise
+            results.append(exc)
+    return results
 
 
 def factor_report(
@@ -254,8 +351,13 @@ def factor_report(
     use_mpqs: bool = True,
     threads: int | None = None,
     perf_mode: bool = False,
+    skip_preprocessing: bool = False,
+    large_prime_bound: int = 50000,
+    enable_double_large_primes: bool = False,
+    seed: int | None = None,
 ) -> dict[str, Any]:
     try:
+        _validate_seed(seed)
         raw = _graynfs.factor_report_decimal(
             _validate_number(n),
             degree,
@@ -274,6 +376,10 @@ def factor_report(
             use_mpqs,
             threads,
             perf_mode,
+            skip_preprocessing,
+            large_prime_bound,
+            enable_double_large_primes,
+            seed,
         )
     except ValueError as exc:
         raise _to_gray_error(exc)

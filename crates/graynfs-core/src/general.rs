@@ -570,18 +570,29 @@ fn scan_dependencies(
     }
 }
 
-pub fn gnfs_divisor(
+pub(crate) fn gnfs_divisor(
     n: &Integer,
     options: &FactorOptions,
     cancelled: &AtomicBool,
     deadline: Option<Instant>,
+    timings: Option<&TimingCollector>,
 ) -> Result<(Integer, PolynomialPair, usize, usize, Vec<StageTiming>), FactorError> {
-    let collector = TimingCollector::default();
-    match gnfs_divisor_timed(n, options, cancelled, deadline, &collector) {
-        Ok((divisor, polynomial, relations, rank)) => {
-            Ok((divisor, polynomial, relations, rank, collector.snapshot()))
+    match timings {
+        Some(collector) => match gnfs_divisor_timed(n, options, cancelled, deadline, collector) {
+            Ok((divisor, polynomial, relations, rank)) => {
+                Ok((divisor, polynomial, relations, rank, Vec::new()))
+            }
+            Err(error) => Err(error),
+        },
+        None => {
+            let collector = TimingCollector::default();
+            match gnfs_divisor_timed(n, options, cancelled, deadline, &collector) {
+                Ok((divisor, polynomial, relations, rank)) => {
+                    Ok((divisor, polynomial, relations, rank, collector.snapshot()))
+                }
+                Err(error) => Err(error),
+            }
         }
-        Err(error) => Err(error),
     }
 }
 
@@ -630,6 +641,19 @@ fn gnfs_divisor_timed(
         let budget_bytes = options.memory_budget_bytes();
         let budget_mb = budget_bytes.div_ceil(1024 * 1024);
         let need_mb = need_bytes.div_ceil(1024 * 1024);
+        crate::factor::record_memory_shadow(
+            Some(collector),
+            "general-prematrix",
+            Some(degree),
+            columns,
+            rows,
+            0,
+            0,
+            options.sieve_a_bound as i64,
+            options_thread_count(options),
+            budget_bytes,
+            need_mb as u64 <= budget_mb,
+        );
         if need_mb as u64 > budget_mb {
             return Err(FactorError::ResourceLimit(format!(
                 "the relation matrix would need about {need_mb} MiB, above the memory budget of {budget_mb} MiB"
@@ -666,6 +690,26 @@ fn gnfs_divisor_timed(
     {
         let need_bytes = estimate_total_bytes(base.column_count(), relations.len());
         let budget_bytes = options.memory_budget_bytes();
+        let live_error = live_budget_exceeded(
+            options,
+            base.column_count(),
+            relations.len(),
+            bank.singles.len(),
+            bank.doubles.len(),
+        );
+        crate::factor::record_memory_shadow(
+            Some(collector),
+            "general-postcollect",
+            Some(degree),
+            base.column_count(),
+            relations.len(),
+            bank.singles.len(),
+            bank.doubles.len(),
+            options.sieve_a_bound as i64,
+            options_thread_count(options),
+            budget_bytes,
+            need_bytes <= budget_bytes && live_error.is_none(),
+        );
         if need_bytes > budget_bytes {
             return Err(FactorError::ResourceLimit(format!(
                 "the relation matrix would need about {} MiB, above the memory budget of {} MiB",
@@ -673,13 +717,7 @@ fn gnfs_divisor_timed(
                 budget_bytes.div_ceil(1024 * 1024)
             )));
         }
-        if let Some(error) = live_budget_exceeded(
-            options,
-            base.column_count(),
-            relations.len(),
-            bank.singles.len(),
-            bank.doubles.len(),
-        ) {
+        if let Some(error) = live_error {
             return Err(error);
         }
     }
@@ -696,13 +734,27 @@ fn gnfs_divisor_timed(
         value
     };
     if relations.len() <= rank && (!bank.singles.is_empty() || !bank.doubles.is_empty()) {
-        if let Some(error) = live_budget_exceeded(
+        let drain_gate = live_budget_exceeded(
             options,
             base.column_count(),
             relations.len(),
             bank.singles.len(),
             bank.doubles.len(),
-        ) {
+        );
+        crate::factor::record_memory_shadow(
+            Some(collector),
+            "general-predrain",
+            Some(degree),
+            base.column_count(),
+            relations.len(),
+            bank.singles.len(),
+            bank.doubles.len(),
+            options.sieve_a_bound as i64,
+            options_thread_count(options),
+            options.memory_budget_bytes(),
+            drain_gate.is_none(),
+        );
+        if let Some(error) = drain_gate {
             return Err(error);
         }
         let drain_started = Instant::now();
@@ -739,6 +791,26 @@ fn gnfs_divisor_timed(
         );
         let need_bytes = estimate_total_bytes(base.column_count(), relations.len());
         let budget_bytes = options.memory_budget_bytes();
+        let live_error = live_budget_exceeded(
+            options,
+            base.column_count(),
+            relations.len(),
+            bank.singles.len(),
+            bank.doubles.len(),
+        );
+        crate::factor::record_memory_shadow(
+            Some(collector),
+            "general-postdrain",
+            Some(degree),
+            base.column_count(),
+            relations.len(),
+            bank.singles.len(),
+            bank.doubles.len(),
+            options.sieve_a_bound as i64,
+            options_thread_count(options),
+            budget_bytes,
+            need_bytes <= budget_bytes && live_error.is_none(),
+        );
         if need_bytes > budget_bytes {
             return Err(FactorError::ResourceLimit(format!(
                 "the relation matrix would need about {} MiB, above the memory budget of {} MiB",
@@ -746,13 +818,7 @@ fn gnfs_divisor_timed(
                 budget_bytes.div_ceil(1024 * 1024)
             )));
         }
-        if let Some(error) = live_budget_exceeded(
-            options,
-            base.column_count(),
-            relations.len(),
-            bank.singles.len(),
-            bank.doubles.len(),
-        ) {
+        if let Some(error) = live_error {
             return Err(error);
         }
     }
@@ -1120,7 +1186,22 @@ fn collect_relations(
     let max_b = i64::try_from(options.sieve_b_bound)
         .map_err(|_| FactorError::InvalidInput("sieve b bound is too large".to_string()))?;
     let workers = options_thread_count(options);
-    if estimate_collect_bytes(base.column_count(), max_a, workers) > options.memory_budget_bytes() {
+    let collect_allow = estimate_collect_bytes(base.column_count(), max_a, workers)
+        <= options.memory_budget_bytes();
+    crate::factor::record_memory_shadow(
+        Some(collector),
+        "general-collect-precheck",
+        Some(degree),
+        base.column_count(),
+        0,
+        0,
+        0,
+        max_a,
+        workers,
+        options.memory_budget_bytes(),
+        collect_allow,
+    );
+    if !collect_allow {
         return Err(FactorError::ResourceLimit(format!(
             "general sieve arrays would exceed the memory budget of {} MiB",
             options.memory_budget_bytes().div_ceil(1024 * 1024)
@@ -1167,13 +1248,27 @@ fn collect_relations(
             .iter()
             .filter(|relation| relation.mask.iter().any(|word| *word != 0))
             .count();
-        if let Some(error) = live_budget_exceeded(
+        let pass_gate = live_budget_exceeded(
             options,
             context.base.column_count(),
             complete.len(),
             bank.singles.len(),
             bank.doubles.len(),
-        ) {
+        );
+        crate::factor::record_memory_shadow(
+            Some(collector),
+            "general-collect-pass",
+            Some(degree),
+            context.base.column_count(),
+            complete.len(),
+            bank.singles.len(),
+            bank.doubles.len(),
+            attempt_a,
+            workers,
+            options.memory_budget_bytes(),
+            pass_gate.is_none(),
+        );
+        if let Some(error) = pass_gate {
             return Err(error);
         }
         collector.record_elapsed(
@@ -3411,7 +3506,7 @@ mod tests {
             ..FactorOptions::default()
         };
         let cancelled = AtomicBool::new(false);
-        let outcome = gnfs_divisor(&n, &options, &cancelled, None);
+        let outcome = gnfs_divisor(&n, &options, &cancelled, None, None);
         assert!(
             matches!(outcome, Err(FactorError::ResourceLimit(_))),
             "zero budget must fail before sieving"

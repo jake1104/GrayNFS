@@ -79,3 +79,10 @@ def test_proof_default_method_is_aks_proof() -> None:
     # M89 = 2**89 - 1 is prime but above the AKS 64-bit cap, so the
     # proving default conservatively reports False (BPSW would say True).
     assert graynfs.is_prime_proof((1 << 89) - 1) is False
+
+
+def test_proof_over_cap_false_means_unproven_not_composite() -> None:
+    """Over-64-bit False means unproven, not composite."""
+    assert graynfs.is_prime_proof((1 << 89) - 1) is False
+    assert graynfs.is_prime_proof((1 << 89) - 1, method="aks") is False
+    assert graynfs.is_probable_prime((1 << 89) - 1) is True

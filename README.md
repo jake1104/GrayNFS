@@ -1,6 +1,6 @@
 # GrayNFS · [![Version](https://img.shields.io/badge/version-v0.2.1-blue.svg)](CHANGELOG.md) [![License: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE.md) [![CI](https://github.com/jake1104/GrayNFS/actions/workflows/ci.yml/badge.svg)](https://github.com/jake1104/GrayNFS/actions/workflows/ci.yml) [![Python](https://img.shields.io/badge/python-3.8%2B-blue.svg)](python/graynfs/__init__.py)
 
-Pure-Rust adaptive integer factorization: a GNFS core with a measured cascade to SIQS, ECM, and classical trial methods.
+Pure-Rust adaptive integer factorization: a measured cascade (trial division, Fermat, p-1/p+1, ECM, SIQS, GNFS degrees 3-5); the fastest verified answer wins.
 
 - **Adaptive cascade:** trial division, perfect powers, Fermat, Pollard p-1, Williams p+1, Brent Rho, Lenstra ECM, SIQS at degree 2, GNFS at degrees 3-5. Measured cost picks the winner; the fastest correct answer wins.
 - **Verified output:** every reported factorization is product-checked before it is returned. A wrong answer is a hard failure, never a slow one.
@@ -114,6 +114,7 @@ computation releases the Python GIL, so concurrent `factor` calls overlap.
 | `--sieve-a-bound` | 700 | sieve bound on `a` |
 | `--sieve-b-bound` | 120 | sieve bound on `b` |
 | `--large-prime-bound` | 50000 | upper bound of a residual large prime |
+| `--seed` | absent (0x9e3779b97f4a7c15) | seed for the deterministic RNG |
 | `--timeout-seconds` | 60 | overall budget; on expiry the run ends with a clean `ResourceLimit` and a non-zero exit |
 | `--max-memory-mb` | unset (1 GiB budget) | cap estimated sieve and matrix memory in MiB before allocating; exceeded estimates fail cleanly with `ResourceLimit` instead of allocating |
 | `--no-fallback` | off | disable the Pollard-Rho fallback |
@@ -190,7 +191,7 @@ graph LR
 
 | crate | role |
 | :---- | :--- |
-| `graynfs-core` | factorization library: adaptive cascade (`cascade`, `pm1`, `ecm`), preprocessing, sieving (SIQS degree 2 with QS fallback, GNFS degrees 3-5), F2 linear algebra, algebraic square root, record-only SNFS special-form detector |
+| `graynfs-core` | adaptive integer factorization engine: measured cascade (`cascade`, `pm1`, `ecm`), preprocessing, sieving (SIQS degree 2 with QS fallback, GNFS degrees 3-5 as one engine), F2 linear algebra, algebraic square root, record-only SNFS special-form detector |
 | `graynfs-cli` | `graynfs <N>` command-line front end |
 | `graynfs-py` | PyO3 extension module exposed as the `graynfs` Python package |
 | `graynfs-bench` | benchmark tiers with per-case deadlines and JSON output |
@@ -233,8 +234,8 @@ its own provenance (`task_id`, tier, timeout, threads, seeds, timestamp).
 
 | case | winner | elapsed |
 | :--- | :----- | :------ |
-| `770817968652704265841785071059` 100-bit SIQS | SIQS 1878/945 | 229 ms median (208-233 of 3) |
-| 267-bit with a 21-digit factor | ECM | 859 ms median (663/859/1024 at curves=112; YAFU historical ~836 median of 5) |
+| `770817968652704265841785071059` 100-bit SIQS | SIQS 1878/945 | 195 ms median (175-203 of 5, re-measured 2026-10-24; YAFU re-measured 213 median of 5, tie) |
+| 267-bit with a 21-digit factor | ECM | 506 ms median (504-593 at curves=112, re-measured 2026-10-24; YAFU re-measured 1194 median of 5, gray leads) |
 | `3426790303412814276981061` 82-bit | default p-1 | ~12 ms |
 | hostile far-apart 105-bit | forced degree-2 3269/907 | ~2.2 s median (full cascade wins via ECM in ~205 ms) |
 | 267-bit at `--timeout-seconds 1` | ECM | historical 5/5 (393-473 ms); re-verified 3/5 (676-692 ms, n=5) |
@@ -253,7 +254,7 @@ sieve width over a fixed grid at the default LP bound.
 | :--- | :---- | :-------- | :--- | :------ |
 | `1000036000099 = 1000003 * 1000033` | default | n/a (preprocessing win, no sieve) | n/a | 0 ms, Fermat win (single) |
 | `100160063 = 10007 * 10009` | `--skip-preprocessing --degree 3` | 604 | 293 | 120 ms historical row, kept for reference |
-| `1155285037654380637 = 1074741869 * 1074941873` | `--skip-preprocessing --degree 3` | 3682 | 2422 | 1702 ms total, collect 1133 ms, rank 56 ms (single) |
+| `1155285037654380637 = 1074741869 * 1074941873` | `--skip-preprocessing --degree 3` | 3682 | 2422 | 1702 ms total, collect 1133 ms, rank 56 ms (historical single-draw) |
 | `100160063 = 10007 * 10009` | `--skip-preprocessing --degree 4` | 934 | 549 | 225 ms (single) |
 | `4606404410723 = 2048581 * 2248583` | `--skip-preprocessing --degree 5` + bounds below | 4265 | 2810 | 8224 ms total, collect 519 ms, rank 64 ms (single) |
 | `770817968652704265841785071059` | `--skip-preprocessing --degree 2` | 1878 | 945 | total 208-233 ms, median 229 (of 3) |
@@ -269,19 +270,19 @@ The deg5 row used `--rational-base-bound 4000 --algebraic-base-bound 20000
 | `1155285037654380637` 61-bit | Fermat | 0 ms (single; GNFS path: 1702 ms at 3682/2422) |
 | `726421589145731 = 5467499 * 132861769` | p+1 after Fermat/p-1 misses | 753 ms historical row |
 | `28336447260686263324663` 76-bit | p+1 | 3191 ms historical row |
-| 267-bit (above) | ECM after Fermat/p±1 misses | 859 ms median (of 3) |
+| 267-bit (above) | ECM after Fermat/p±1 misses | 506 ms median (of 5, re-measured 2026-10-24; 859 of 3 kept as historical) |
 | same 267-bit at `--timeout-seconds 1` | ECM | 5/5 wins, 393-473 ms (historical) / 3/5 wins, 676-692 ms (re-measured 2026-10-17) |
 | `768805586871186146129` 70-bit | SIQS | 27 ms historical row |
 | `3426790303412814276981061` 82-bit | SIQS forced route / p-1 default route | 35 ms / 12 ms (single) |
 | `768805586871186146129` 70-bit | p-1 after Fermat miss | 13 ms (single) |
 
-External reference (YAFU 3.1.9 static AVX2, 16 threads, identical inputs;
-gray side re-measured 2026-10-17, release, 16 threads, medians of 3; YAFU
-side NOT re-run — no YAFU binary this round, so YAFU figures are historical
-values from the archived 2026-10-17 5-run set (measurement logs, not shipped in git)):
-100-bit forced-SIQS gray 229 ms median (208/229/233) vs YAFU historical
-157-218 ms (median ~179 of 5), a tie within YAFU's own spread. Demo267 gray
-859 ms median (663/859/1024) vs YAFU historical ~836 ms median of 5 (559-1198).
+External reference (YAFU 3.1.9 static AVX2 restored 2026-10-24, 16 threads,
+identical inputs; both sides re-measured 2026-10-24, release, medians of 5;
+raw logs logs/v0.2.1.11.2/, historical 2026-10-17 5-run set superseded but kept):
+100-bit forced-SIQS gray 195 ms median (175/195/203) vs YAFU re-measured
+174-286 ms (median 213 of 5), a tie within the ±20 ms noise rule and YAFU's own
+spread. Demo267 gray 506 ms median (504/506/579, curves=112) vs YAFU
+re-measured 1194 ms median of 5 (772-1550), gray leads.
 
 ### 267-bit repro case
 
@@ -323,8 +324,21 @@ unrolled REDC, prime-only stage-2 BSGS, 16-thread curves, stage-2 cap 16M),
 balanced mid-size inputs to the siever or the GNFS degree race, leftovers to
 the Rho fallback. The memory budget is an estimate-based soft guard, not an RSS hard limit.
 The quintic forced-path test covers 27-bit 100160063 only, not larger-input efficiency.
-The 105-bit quarantine stays non-blocking with owner/review recorded.
+The 105-bit quarantine stays non-blocking with owner/review recorded. Knife-edge cells of the b70-deg3 kind require a longer explicit budget before any reproduced-number claim.
 Default-path wins on small and medium inputs come from the cascade stages (trial division, Fermat, p-1/p+1, ECM, SIQS); for example, the 61-bit `1155285037654380637` row already records `Fermat 0 ms` on the default route against `1702 ms` on the forced degree-3 GNFS route. Forced degree-3+ GNFS routes are for research and comparison via `--skip-preprocessing --degree d`; the 105-bit hostile cell already records the forced-degree-2 route at `~2.2 s` while the full cascade resolves the same input via ECM in `~205 ms`. The per-stage `race_pilot` (`relations=`/`err=`) and `race_escalation` (`pick=`/`rate=`) timing records show which degree actually contended.
+
+Frozen per-cell winners (`probe/v0.2.1.1.3-report.md:23-43`, medians copied exactly, no recomputation):
+
+| member | route | method | median |
+| --- | --- | --- | --- |
+| b70 | default | pm1 | 15.5 ms |
+| deg3skip | default | fermat | 0 ms |
+| bit82 | default | pm1 | 19 ms |
+| bit100 | default | ecm | 167.5 ms |
+| hostile105 | default | ecm | 170.5 ms |
+| demo267 | default | ecm | 1130.5 ms |
+
+GNFS 0/6 default-path: no frozen-corpus member is won by GNFS on the default route. This claim holds for the 6-member frozen corpus only, not for general inputs.
 
 ## Correctness
 

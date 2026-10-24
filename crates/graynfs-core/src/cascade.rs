@@ -523,6 +523,7 @@ pub fn reclaim_note(plan: &ReclaimPlan) -> String {
 pub(crate) fn control_joint_memory(
     n: &Integer,
     options: &crate::options::FactorOptions,
+    timings: Option<&crate::factor::TimingCollector>,
 ) -> ReclaimPlan {
     let needed = estimate_siqs_relations_needed(n, options);
     let columns = needed.saturating_sub(1);
@@ -532,6 +533,19 @@ pub(crate) fn control_joint_memory(
     let collect = crate::siqs::siqs_collect_estimate_bytes(columns, width as i64, workers);
     let pressure = collect.saturating_add(live);
     let budget = options.memory_budget_bytes();
+    crate::factor::record_memory_shadow(
+        timings,
+        "cascade-reclaim-plan",
+        None,
+        columns,
+        needed,
+        0,
+        0,
+        width as i64,
+        workers,
+        budget,
+        true,
+    );
     let base = crate::options::FactorOptions::default().sieve_a_bound;
     plan_joint_reclaim(
         pressure,
@@ -683,7 +697,7 @@ fn run_single_slice(
     ecm_resume: Option<(u32, u64)>,
     siqs_bank: crate::siqs::SiqsBank,
 ) -> JointResult {
-    let reclaim = control_joint_memory(n, options);
+    let reclaim = control_joint_memory(n, options, timings);
     if let Some(collector) = timings {
         collector.record_elapsed("reclaim", None, 0, reclaim_note(&reclaim));
     }

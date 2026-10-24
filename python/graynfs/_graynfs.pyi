@@ -8,6 +8,7 @@ def factor_decimal(
     sieve_a_bound: int = ...,
     sieve_b_bound: int = ...,
     timeout_seconds: int | None = ...,
+    max_memory_mb: int | None = ...,
     allow_fallback: bool = ...,
     use_fermat: bool = ...,
     use_squfof: bool = ...,
@@ -17,6 +18,10 @@ def factor_decimal(
     use_mpqs: bool = ...,
     threads: int | None = ...,
     perf_mode: bool = ...,
+    skip_preprocessing: bool = ...,
+    large_prime_bound: int = ...,
+    enable_double_large_primes: bool = ...,
+    seed: int | None = ...,
 ) -> list[str]: ...
 def factor_with_progress_decimal(
     n: str,
@@ -27,6 +32,7 @@ def factor_with_progress_decimal(
     sieve_a_bound: int = ...,
     sieve_b_bound: int = ...,
     timeout_seconds: int | None = ...,
+    max_memory_mb: int | None = ...,
     allow_fallback: bool = ...,
     use_fermat: bool = ...,
     use_squfof: bool = ...,
@@ -36,6 +42,10 @@ def factor_with_progress_decimal(
     use_mpqs: bool = ...,
     threads: int | None = ...,
     perf_mode: bool = ...,
+    skip_preprocessing: bool = ...,
+    large_prime_bound: int = ...,
+    enable_double_large_primes: bool = ...,
+    seed: int | None = ...,
 ) -> list[str]: ...
 def stage_timings_decimal(
     n: str,
@@ -45,6 +55,7 @@ def stage_timings_decimal(
     sieve_a_bound: int = ...,
     sieve_b_bound: int = ...,
     timeout_seconds: int | None = ...,
+    max_memory_mb: int | None = ...,
     allow_fallback: bool = ...,
     use_fermat: bool = ...,
     use_squfof: bool = ...,
@@ -54,8 +65,35 @@ def stage_timings_decimal(
     use_mpqs: bool = ...,
     threads: int | None = ...,
     perf_mode: bool = ...,
+    skip_preprocessing: bool = ...,
+    large_prime_bound: int = ...,
+    enable_double_large_primes: bool = ...,
+    seed: int | None = ...,
 ) -> list[dict[str, Any]]: ...
 def is_probable_prime_decimal(n: str) -> bool: ...
 def is_probable_prime_fast_decimal(n: str, rounds: int = ...) -> bool: ...
 def is_prime_proof_decimal(n: str, method: str = ...) -> bool: ...
+def factor_report_decimal(
+    n: str,
+    degree: int | None = ...,
+    rational_base_bound: int = ...,
+    algebraic_base_bound: int = ...,
+    sieve_a_bound: int = ...,
+    sieve_b_bound: int = ...,
+    timeout_seconds: int | None = ...,
+    max_memory_mb: int | None = ...,
+    allow_fallback: bool = ...,
+    use_fermat: bool = ...,
+    use_squfof: bool = ...,
+    use_pm1: bool = ...,
+    use_pp1: bool = ...,
+    use_ecm: bool = ...,
+    use_mpqs: bool = ...,
+    threads: int | None = ...,
+    perf_mode: bool = ...,
+    skip_preprocessing: bool = ...,
+    large_prime_bound: int = ...,
+    enable_double_large_primes: bool = ...,
+    seed: int | None = ...,
+) -> dict[str, Any]: ...
 def version() -> str: ...

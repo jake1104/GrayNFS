@@ -404,3 +404,103 @@ def test_to_gray_error_passes_unknown_through() -> None:
     assert graynfs._to_gray_error(original) is original
     empty = ValueError("")
     assert graynfs._to_gray_error(empty) is empty
+
+
+def test_route_parity_defaults_match_implicit() -> None:
+    assert graynfs.factor(
+        100160063,
+        skip_preprocessing=False,
+        large_prime_bound=50000,
+        enable_double_large_primes=False,
+        seed=None,
+    ) == graynfs.factor(100160063)
+
+
+def test_skip_preprocessing_reaches_sieve_stages() -> None:
+    rows = graynfs.stage_timings(
+        100160063,
+        degree=3,
+        algebraic_base_bound=500,
+        sieve_a_bound=1600,
+        sieve_b_bound=700,
+        timeout_seconds=120,
+        skip_preprocessing=True,
+    )
+    stages = {row["stage"] for row in rows}
+    assert "relation_collection" in stages
+    assert "fermat" not in stages
+    assert "total" in stages
+
+
+def test_skip_preprocessing_pinned_identity() -> None:
+    factors = graynfs.factor(
+        100160063,
+        degree=3,
+        algebraic_base_bound=500,
+        sieve_a_bound=1600,
+        sieve_b_bound=700,
+        timeout_seconds=120,
+        skip_preprocessing=True,
+    )
+    assert factors == [10007, 10009]
+
+
+def test_seed_determinism_on_forced_degree_two() -> None:
+    options: Any = {
+        "degree": 2,
+        "skip_preprocessing": True,
+        "threads": 1,
+        "seed": 111,
+    }
+    first = graynfs.factor_report(100160063, **options)
+    second = graynfs.factor_report(100160063, **options)
+    assert first["factors"] == [10007, 10009]
+    assert first["factors"] == second["factors"]
+    assert first["relations"] == second["relations"]
+    assert first["rank"] == second["rank"]
+    default_seed = graynfs.factor_report(
+        100160063, degree=2, skip_preprocessing=True, threads=1
+    )
+    pinned_constant = graynfs.factor_report(
+        100160063,
+        degree=2,
+        skip_preprocessing=True,
+        threads=1,
+        seed=0x9E3779B97F4A7C15,
+    )
+    assert default_seed["factors"] == pinned_constant["factors"]
+    assert default_seed["relations"] == pinned_constant["relations"]
+
+
+def test_seed_kwarg_one_line_identity() -> None:
+    assert graynfs.factor(15, seed=111) == [3, 5]
+
+
+def test_factor_batch_of_one_equals_factor_under_shared_options() -> None:
+    options: Any = {
+        "degree": 3,
+        "algebraic_base_bound": 500,
+        "sieve_a_bound": 1600,
+        "sieve_b_bound": 700,
+        "timeout_seconds": 120,
+    }
+    assert graynfs.factor_batch([100160063], **options) == [
+        graynfs.factor(100160063, **options)
+    ]
+
+
+def test_factor_batch_fail_fast_false_collects_mixed() -> None:
+    results = graynfs.factor_batch([15, 0, 100160063], fail_fast=False)
+    assert results[0] == [3, 5]
+    assert isinstance(results[1], graynfs.GrayNFSError)
+    assert results[1].category == "input"
+    assert results[2] == [10007, 10009]
+
+
+def test_factor_batch_fail_fast_true_raises_first() -> None:
+    try:
+        graynfs.factor_batch([15, 0, 100160063])
+    except graynfs.GrayNFSError as exc:
+        assert exc.category == "input"
+    else:
+        raise AssertionError("expected GrayNFSError")

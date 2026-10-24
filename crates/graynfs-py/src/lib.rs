@@ -58,6 +58,10 @@ fn build_options(
     use_mpqs: bool,
     threads: Option<usize>,
     perf_mode: bool,
+    skip_preprocessing: bool,
+    large_prime_bound: usize,
+    enable_double_large_primes: bool,
+    seed: Option<u64>,
 ) -> FactorOptions {
     FactorOptions {
         degree,
@@ -65,16 +69,20 @@ fn build_options(
         algebraic_base_bound,
         sieve_a_bound,
         sieve_b_bound,
+        large_prime_bound,
+        seed: seed.unwrap_or(FactorOptions::default().seed),
+        threads,
         max_duration: timeout_seconds.map(std::time::Duration::from_secs),
         max_memory_mb,
         allow_fallback,
+        skip_preprocessing,
+        enable_double_large_primes,
         use_fermat,
         use_squfof,
         use_pm1,
         use_pp1,
         use_ecm,
         use_mpqs,
-        threads,
         perf_mode,
         ..FactorOptions::default()
     }
@@ -82,7 +90,7 @@ fn build_options(
 
 #[allow(clippy::too_many_arguments)]
 #[pyfunction]
-#[pyo3(signature = (n, degree=None, rational_base_bound=2000, algebraic_base_bound=2000, sieve_a_bound=700, sieve_b_bound=120, timeout_seconds=None, max_memory_mb=None, allow_fallback=true, use_fermat=true, use_squfof=true, use_pm1=true, use_pp1=true, use_ecm=true, use_mpqs=true, threads=None, perf_mode=false))]
+#[pyo3(signature = (n, degree=None, rational_base_bound=2000, algebraic_base_bound=2000, sieve_a_bound=700, sieve_b_bound=120, timeout_seconds=None, max_memory_mb=None, allow_fallback=true, use_fermat=true, use_squfof=true, use_pm1=true, use_pp1=true, use_ecm=true, use_mpqs=true, threads=None, perf_mode=false, skip_preprocessing=false, large_prime_bound=50000, enable_double_large_primes=false, seed=None))]
 fn factor_decimal(
     py: Python<'_>,
     n: &str,
@@ -102,6 +110,10 @@ fn factor_decimal(
     use_mpqs: bool,
     threads: Option<usize>,
     perf_mode: bool,
+    skip_preprocessing: bool,
+    large_prime_bound: usize,
+    enable_double_large_primes: bool,
+    seed: Option<u64>,
 ) -> PyResult<Vec<String>> {
     let value = parse_decimal(n).map_err(to_py_error)?;
     let options = build_options(
@@ -121,6 +133,10 @@ fn factor_decimal(
         use_mpqs,
         threads,
         perf_mode,
+        skip_preprocessing,
+        large_prime_bound,
+        enable_double_large_primes,
+        seed,
     );
     let report = py
         .detach(|| factor(&value, &options))
@@ -130,7 +146,7 @@ fn factor_decimal(
 
 #[allow(clippy::too_many_arguments)]
 #[pyfunction]
-#[pyo3(signature = (n, callback=None, degree=None, rational_base_bound=2000, algebraic_base_bound=2000, sieve_a_bound=700, sieve_b_bound=120, timeout_seconds=None, max_memory_mb=None, allow_fallback=true, use_fermat=true, use_squfof=true, use_pm1=true, use_pp1=true, use_ecm=true, use_mpqs=true, threads=None, perf_mode=false))]
+#[pyo3(signature = (n, callback=None, degree=None, rational_base_bound=2000, algebraic_base_bound=2000, sieve_a_bound=700, sieve_b_bound=120, timeout_seconds=None, max_memory_mb=None, allow_fallback=true, use_fermat=true, use_squfof=true, use_pm1=true, use_pp1=true, use_ecm=true, use_mpqs=true, threads=None, perf_mode=false, skip_preprocessing=false, large_prime_bound=50000, enable_double_large_primes=false, seed=None))]
 fn factor_with_progress_decimal(
     py: Python<'_>,
     n: &str,
@@ -151,6 +167,10 @@ fn factor_with_progress_decimal(
     use_mpqs: bool,
     threads: Option<usize>,
     perf_mode: bool,
+    skip_preprocessing: bool,
+    large_prime_bound: usize,
+    enable_double_large_primes: bool,
+    seed: Option<u64>,
 ) -> PyResult<Vec<String>> {
     let value = parse_decimal(n).map_err(to_py_error)?;
     let options = build_options(
@@ -170,6 +190,10 @@ fn factor_with_progress_decimal(
         use_mpqs,
         threads,
         perf_mode,
+        skip_preprocessing,
+        large_prime_bound,
+        enable_double_large_primes,
+        seed,
     );
     if let Some(callback) = callback {
         let report = py
@@ -218,6 +242,10 @@ fn factor_with_progress_decimal(
             use_mpqs,
             threads,
             perf_mode,
+            skip_preprocessing,
+            large_prime_bound,
+            enable_double_large_primes,
+            seed,
         )
     }
 }
@@ -261,7 +289,7 @@ fn is_prime_proof_decimal(py: Python<'_>, n: &str, method: &str) -> PyResult<boo
 
 #[allow(clippy::too_many_arguments)]
 #[pyfunction]
-#[pyo3(signature = (n, degree=None, rational_base_bound=2000, algebraic_base_bound=2000, sieve_a_bound=700, sieve_b_bound=120, timeout_seconds=None, max_memory_mb=None, allow_fallback=true, use_fermat=true, use_squfof=true, use_pm1=true, use_pp1=true, use_ecm=true, use_mpqs=true, threads=None, perf_mode=false))]
+#[pyo3(signature = (n, degree=None, rational_base_bound=2000, algebraic_base_bound=2000, sieve_a_bound=700, sieve_b_bound=120, timeout_seconds=None, max_memory_mb=None, allow_fallback=true, use_fermat=true, use_squfof=true, use_pm1=true, use_pp1=true, use_ecm=true, use_mpqs=true, threads=None, perf_mode=false, skip_preprocessing=false, large_prime_bound=50000, enable_double_large_primes=false, seed=None))]
 fn stage_timings_decimal(
     py: Python<'_>,
     n: &str,
@@ -281,6 +309,10 @@ fn stage_timings_decimal(
     use_mpqs: bool,
     threads: Option<usize>,
     perf_mode: bool,
+    skip_preprocessing: bool,
+    large_prime_bound: usize,
+    enable_double_large_primes: bool,
+    seed: Option<u64>,
 ) -> PyResult<Vec<Py<PyAny>>> {
     let value = parse_decimal(n).map_err(to_py_error)?;
     let options = build_options(
@@ -300,6 +332,10 @@ fn stage_timings_decimal(
         use_mpqs,
         threads,
         perf_mode,
+        skip_preprocessing,
+        large_prime_bound,
+        enable_double_large_primes,
+        seed,
     );
     let report = py
         .detach(|| factor(&value, &options))
@@ -313,7 +349,7 @@ fn stage_timings_decimal(
 
 #[allow(clippy::too_many_arguments)]
 #[pyfunction]
-#[pyo3(signature = (n, degree=None, rational_base_bound=2000, algebraic_base_bound=2000, sieve_a_bound=700, sieve_b_bound=120, timeout_seconds=None, max_memory_mb=None, allow_fallback=true, use_fermat=true, use_squfof=true, use_pm1=true, use_pp1=true, use_ecm=true, use_mpqs=true, threads=None, perf_mode=false))]
+#[pyo3(signature = (n, degree=None, rational_base_bound=2000, algebraic_base_bound=2000, sieve_a_bound=700, sieve_b_bound=120, timeout_seconds=None, max_memory_mb=None, allow_fallback=true, use_fermat=true, use_squfof=true, use_pm1=true, use_pp1=true, use_ecm=true, use_mpqs=true, threads=None, perf_mode=false, skip_preprocessing=false, large_prime_bound=50000, enable_double_large_primes=false, seed=None))]
 fn factor_report_decimal(
     py: Python<'_>,
     n: &str,
@@ -333,6 +369,10 @@ fn factor_report_decimal(
     use_mpqs: bool,
     threads: Option<usize>,
     perf_mode: bool,
+    skip_preprocessing: bool,
+    large_prime_bound: usize,
+    enable_double_large_primes: bool,
+    seed: Option<u64>,
 ) -> PyResult<Py<PyDict>> {
     let value = parse_decimal(n).map_err(to_py_error)?;
     let options = build_options(
@@ -352,6 +392,10 @@ fn factor_report_decimal(
         use_mpqs,
         threads,
         perf_mode,
+        skip_preprocessing,
+        large_prime_bound,
+        enable_double_large_primes,
+        seed,
     );
     let (result, timings) = py.detach(|| factor_with_timings(&value, &options, |_| Ok(())));
     let report = result.map_err(to_py_error)?;
@@ -397,6 +441,10 @@ mod tests {
             true,
             None,
             false,
+            false,
+            50_000,
+            false,
+            None,
         )
     }
 
