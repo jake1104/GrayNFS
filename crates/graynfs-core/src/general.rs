@@ -1149,6 +1149,13 @@ fn check_limits(cancelled: &AtomicBool, deadline: Option<Instant>) -> Result<(),
     Ok(())
 }
 
+pub(crate) fn collect_memory_error(budget_bytes: u64) -> FactorError {
+    FactorError::ResourceLimit(format!(
+        "general sieve arrays would exceed the memory budget of {} MiB",
+        budget_bytes.div_ceil(1024 * 1024)
+    ))
+}
+
 pub(crate) fn live_budget_exceeded(
     options: &FactorOptions,
     columns: usize,
@@ -1202,10 +1209,7 @@ fn collect_relations(
         collect_allow,
     );
     if !collect_allow {
-        return Err(FactorError::ResourceLimit(format!(
-            "general sieve arrays would exceed the memory budget of {} MiB",
-            options.memory_budget_bytes().div_ceil(1024 * 1024)
-        )));
+        return Err(collect_memory_error(options.memory_budget_bytes()));
     }
     let sieve_roots = base.sieve_roots(&polynomial.m);
     let lp_cache = Mutex::new(std::mem::take(&mut base.large_prime_roots));
@@ -1271,6 +1275,8 @@ fn collect_relations(
         if let Some(error) = pass_gate {
             return Err(error);
         }
+        collector.add_cpu_ms(pass_started.elapsed().as_millis(), workers);
+        collector.check_cpu_budget(options)?;
         collector.record_elapsed(
             "collect",
             Some(degree),

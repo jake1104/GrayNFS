@@ -93,6 +93,7 @@ pub struct FactorOptions {
     pub skip_preprocessing: bool,
     pub enable_double_large_primes: bool,
     pub degree_race_fraction: f64,
+    pub max_cpu_seconds: Option<u64>,
     pub use_fermat: bool,
     pub use_squfof: bool,
     pub use_pm1: bool,
@@ -122,6 +123,7 @@ impl Default for FactorOptions {
             skip_preprocessing: false,
             enable_double_large_primes: false,
             degree_race_fraction: 0.2,
+            max_cpu_seconds: None,
             use_fermat: true,
             use_squfof: true,
             use_pm1: true,
@@ -198,6 +200,10 @@ impl FactorOptions {
 
     pub fn effective_deadline(&self, from: Instant) -> Option<Instant> {
         self.max_duration.map(|span| from + span)
+    }
+
+    pub fn cpu_budget_ms(&self) -> Option<u128> {
+        self.max_cpu_seconds.map(|secs| u128::from(secs) * 1000)
     }
 }
 
@@ -386,5 +392,21 @@ mod tests {
         };
         assert!(enabled.use_frobenius);
         assert!(enabled.validate().is_ok());
+    }
+
+    #[test]
+    fn cpu_budget_defaults_to_unset_with_millisecond_conversion() {
+        assert_eq!(FactorOptions::default().max_cpu_seconds, None);
+        assert_eq!(FactorOptions::default().cpu_budget_ms(), None);
+        let capped = FactorOptions {
+            max_cpu_seconds: Some(2),
+            ..FactorOptions::default()
+        };
+        assert_eq!(capped.cpu_budget_ms(), Some(2_000));
+        let zero = FactorOptions {
+            max_cpu_seconds: Some(0),
+            ..FactorOptions::default()
+        };
+        assert_eq!(zero.cpu_budget_ms(), Some(0));
     }
 }

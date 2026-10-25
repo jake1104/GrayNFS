@@ -79,6 +79,7 @@ def factor(
     large_prime_bound: int = 50000,
     enable_double_large_primes: bool = False,
     seed: int | None = None,
+    max_cpu_seconds: int | None = None,
 ) -> list[int]:
     try:
         _validate_seed(seed)
@@ -106,6 +107,7 @@ def factor(
                 large_prime_bound,
                 enable_double_large_primes,
                 seed,
+                max_cpu_seconds,
             )
         ]
     except ValueError as exc:
@@ -136,6 +138,7 @@ def factor_with_progress(
     large_prime_bound: int = 50000,
     enable_double_large_primes: bool = False,
     seed: int | None = None,
+    max_cpu_seconds: int | None = None,
 ) -> list[int]:
     if not callable(callback):
         raise TypeError("callback must be callable")
@@ -166,6 +169,7 @@ def factor_with_progress(
                 large_prime_bound,
                 enable_double_large_primes,
                 seed,
+                max_cpu_seconds,
             )
         ]
     except ValueError as exc:
@@ -230,6 +234,7 @@ def stage_timings(
     large_prime_bound: int = 50000,
     enable_double_large_primes: bool = False,
     seed: int | None = None,
+    max_cpu_seconds: int | None = None,
 ) -> list[dict[str, Any]]:
     try:
         _validate_seed(seed)
@@ -262,6 +267,7 @@ def stage_timings(
                 large_prime_bound,
                 enable_double_large_primes,
                 seed,
+                max_cpu_seconds,
             )
         ]
     except ValueError as exc:
@@ -296,6 +302,7 @@ def factor_batch(
     large_prime_bound: int = 50000,
     enable_double_large_primes: bool = False,
     seed: int | None = None,
+    max_cpu_seconds: int | None = None,
 ) -> list[list[int] | GrayNFSError]:
     results: list[list[int] | GrayNFSError] = []
     for value in ns:
@@ -323,6 +330,7 @@ def factor_batch(
                     large_prime_bound=large_prime_bound,
                     enable_double_large_primes=enable_double_large_primes,
                     seed=seed,
+                    max_cpu_seconds=max_cpu_seconds,
                 )
             )
         except GrayNFSError as exc:
@@ -355,6 +363,7 @@ def factor_report(
     large_prime_bound: int = 50000,
     enable_double_large_primes: bool = False,
     seed: int | None = None,
+    max_cpu_seconds: int | None = None,
 ) -> dict[str, Any]:
     try:
         _validate_seed(seed)
@@ -380,6 +389,7 @@ def factor_report(
             large_prime_bound,
             enable_double_large_primes,
             seed,
+            max_cpu_seconds,
         )
     except ValueError as exc:
         raise _to_gray_error(exc)

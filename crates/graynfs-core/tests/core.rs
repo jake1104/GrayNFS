@@ -141,6 +141,7 @@ fn quadratic_relation_collector_produces_relations() {
         &std::sync::atomic::AtomicBool::new(false),
         None,
         &mut progress,
+        None,
     )
     .expect("relations");
     assert!(!relations.is_empty());

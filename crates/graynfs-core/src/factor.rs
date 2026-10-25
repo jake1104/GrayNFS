@@ -73,8 +73,9 @@ impl StageOutcome {
 }
 
 #[derive(Default)]
-pub(crate) struct TimingCollector {
+pub struct TimingCollector {
     entries: Mutex<Vec<StageTiming>>,
+    cpu_ms: Mutex<u128>,
 }
 
 impl TimingCollector {
@@ -84,7 +85,7 @@ impl TimingCollector {
         degree: Option<usize>,
         started: Instant,
         detail: String,
-    ) {
+    ) -> u128 {
         let elapsed_ms = started.elapsed().as_millis();
         if let Ok(mut entries) = self.entries.lock() {
             entries.push(StageTiming {
@@ -94,6 +95,7 @@ impl TimingCollector {
                 detail,
             });
         }
+        elapsed_ms
     }
 
     pub(crate) fn record_elapsed(
@@ -118,6 +120,32 @@ impl TimingCollector {
             .lock()
             .unwrap_or_else(PoisonError::into_inner)
             .clone()
+    }
+
+    pub(crate) fn add_cpu_ms(&self, elapsed_ms: u128, workers: usize) {
+        let charge = elapsed_ms.saturating_mul(workers.max(1) as u128);
+        if let Ok(mut used) = self.cpu_ms.lock() {
+            *used = used.saturating_add(charge);
+        }
+    }
+
+    pub(crate) fn cpu_used_ms(&self) -> u128 {
+        self.cpu_ms.lock().map(|used| *used).unwrap_or(0)
+    }
+
+    pub(crate) fn check_cpu_budget(&self, options: &FactorOptions) -> Result<(), FactorError> {
+        if let Some(cap_ms) = options.cpu_budget_ms()
+            && self.cpu_used_ms() >= cap_ms
+        {
+            return Err(FactorError::ResourceLimit(format!(
+                "cpu time budget exceeded: used {} ms across {} threads vs budget {} ms (cap {} s)",
+                self.cpu_used_ms(),
+                options.effective_workers(),
+                cap_ms,
+                options.max_cpu_seconds.unwrap_or(0),
+            )));
+        }
+        Ok(())
     }
 
     pub(crate) fn merge(&self, entries: Vec<StageTiming>) {
@@ -184,9 +212,11 @@ impl<'a> Timer<'a> {
         }
     }
 
-    pub(crate) fn finish(self, detail: String) {
+    pub(crate) fn finish(self, detail: String) -> u128 {
         if let Some(collector) = self.collector {
-            collector.record(self.stage, self.degree, self.started, detail);
+            collector.record(self.stage, self.degree, self.started, detail)
+        } else {
+            self.started.elapsed().as_millis()
         }
     }
 }
@@ -238,6 +268,7 @@ where
 {
     let started = Instant::now();
     options.validate()?;
+    check_cpu(Some(collector), options)?;
     if n < &Integer::from(1) {
         return Err(FactorError::InvalidInput(
             "N must be a positive integer".to_string(),
@@ -336,6 +367,7 @@ where
     if n == &Integer::from(1) {
         return Ok(());
     }
+    check_cpu(timings, options)?;
     if cancelled.load(Ordering::Relaxed) {
         return Err(FactorError::Cancelled);
     }
@@ -494,7 +526,8 @@ where
         if let Some(divisor) = fermat_probe(n, slice) {
             let cofactor = n / &divisor;
             outcome.record("fermat");
-            timer.finish(format!("divisor={divisor}"));
+            let elapsed = timer.finish(format!("divisor={divisor}"));
+            bill_cpu(timings, options, elapsed)?;
             return factor_recursive(
                 &divisor,
                 options,
@@ -528,7 +561,8 @@ where
                 )
             });
         }
-        timer.finish("no divisor in slice".to_string());
+        let elapsed = timer.finish("no divisor in slice".to_string());
+        bill_cpu(timings, options, elapsed)?;
     }
     if !options.skip_preprocessing && options.use_pm1 {
         let timer = Timer::new(timings, "pm1", None);
@@ -536,7 +570,8 @@ where
         if let Some(divisor) = crate::pm1::pollard_pm1(n, stage_one, slice) {
             let cofactor = n / &divisor;
             outcome.record("pm1");
-            timer.finish(format!("divisor={divisor}"));
+            let elapsed = timer.finish(format!("divisor={divisor}"));
+            bill_cpu(timings, options, elapsed)?;
             return factor_recursive(
                 &divisor,
                 options,
@@ -570,7 +605,8 @@ where
                 )
             });
         }
-        timer.finish("no divisor".to_string());
+        let elapsed = timer.finish("no divisor".to_string());
+        bill_cpu(timings, options, elapsed)?;
     }
     if !options.skip_preprocessing && options.use_pp1 {
         let timer = Timer::new(timings, "pp1", None);
@@ -578,7 +614,8 @@ where
         if let Some(divisor) = crate::pm1::williams_pp1(n, crate::pm1::STAGE_ONE_BOUND, slice) {
             let cofactor = n / &divisor;
             outcome.record("pp1");
-            timer.finish(format!("divisor={divisor}"));
+            let elapsed = timer.finish(format!("divisor={divisor}"));
+            bill_cpu(timings, options, elapsed)?;
             return factor_recursive(
                 &divisor,
                 options,
@@ -612,7 +649,8 @@ where
                 )
             });
         }
-        timer.finish("no divisor".to_string());
+        let elapsed = timer.finish("no divisor".to_string());
+        bill_cpu(timings, options, elapsed)?;
     }
     if !options.skip_preprocessing && options.use_ecm {
         let timer = Timer::new(timings, "ecm_cheap", None);
@@ -632,10 +670,11 @@ where
         if let Some(divisor) = cheap.divisor {
             let cofactor = n / &divisor;
             outcome.record("ecm");
-            timer.finish(format!(
+            let elapsed = timer.finish(format!(
                 "divisor={divisor} curves={} ecm_ms={}",
                 cheap.curves_run, cheap.elapsed_ms
             ));
+            bill_cpu(timings, options, elapsed)?;
             return factor_recursive(
                 &divisor,
                 options,
@@ -669,10 +708,11 @@ where
                 )
             });
         }
-        timer.finish(format!(
+        let elapsed = timer.finish(format!(
             "no divisor curves={} ecm_ms={}",
             cheap.curves_run, cheap.elapsed_ms
         ));
+        bill_cpu(timings, options, elapsed)?;
     }
     let mut ecm_tranche_note = String::from("ecm_t1=none ecm_cap=open");
     if !options.skip_preprocessing && options.use_ecm {
@@ -733,10 +773,11 @@ where
         if let Some(divisor) = joint.divisor {
             let cofactor = n / &divisor;
             outcome.record(joint.winner.unwrap_or("ecm"));
-            timer.finish(format!(
+            let elapsed = timer.finish(format!(
                 "divisor={divisor} curves={} ecm_ms={} stage1_ms={} stage2_ms={}{ecm_box_ratio}",
                 joint.ecm_curves, joint.ecm_ms, joint.ecm_stage_one_ms, joint.ecm_stage_two_ms
             ));
+            bill_cpu(timings, options, elapsed)?;
             return factor_recursive(
                 &divisor,
                 options,
@@ -770,10 +811,11 @@ where
                 )
             });
         }
-        timer.finish(format!(
+        let elapsed = timer.finish(format!(
             "no divisor curves={} ecm_ms={} stage1_ms={} stage2_ms={}{ecm_box_ratio}",
             joint.ecm_curves, joint.ecm_ms, joint.ecm_stage_one_ms, joint.ecm_stage_two_ms
         ));
+        bill_cpu(timings, options, elapsed)?;
     }
     {
         let timer = Timer::new(timings, "cascade", None);
@@ -806,6 +848,7 @@ where
         ));
     }
     if options.use_gnfs {
+        check_cpu(timings, options)?;
         emit(
             progress,
             "gnfs",
@@ -885,6 +928,7 @@ where
         ));
     }
     outcome.record("fallback");
+    check_cpu(timings, options)?;
     emit(progress, "fallback", 3, 7, "running Pollard-Rho fallback")?;
     let divisor = pollard_rho(n, rng, cancelled, deadline)?;
     let cofactor = n / &divisor;
@@ -1013,6 +1057,19 @@ fn resolve_scaled_bounds(n: &Integer, degree: usize, options: &mut FactorOptions
             .saturating_mul(large_prime_growth)
             .min(SCALED_LARGE_PRIME_CAP);
     }
+}
+
+fn preflight_collect_exceeds(n: &Integer, degree: usize, options: &FactorOptions) -> bool {
+    if degree < 3 {
+        return false;
+    }
+    let mut attempt = options.clone();
+    resolve_scaled_bounds(n, degree, &mut attempt);
+    let Ok(max_a) = i64::try_from(attempt.sieve_a_bound) else {
+        return false;
+    };
+    let workers = attempt.effective_workers();
+    crate::options::estimate_collect_bytes(1, max_a, workers) > attempt.memory_budget_bytes()
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -1189,19 +1246,27 @@ where
         if now >= bound {
             break;
         }
-        let slice = now + (bound - now).mul_f64(fraction);
-        let slice_ms = slice.saturating_duration_since(now).as_millis();
         let pilot_start = Instant::now();
-        let outcome = run_degree(
-            n,
-            options,
-            degree,
-            cancelled,
-            Some(slice),
-            progress,
-            timings,
-            true,
-        );
+        let (outcome, slice_ms) = if degree >= 3 && preflight_collect_exceeds(n, degree, options) {
+            (
+                Err(general::collect_memory_error(options.memory_budget_bytes())),
+                0,
+            )
+        } else {
+            let slice = now + (bound - now).mul_f64(fraction);
+            let slice_ms = slice.saturating_duration_since(now).as_millis();
+            let outcome = run_degree(
+                n,
+                options,
+                degree,
+                cancelled,
+                Some(slice),
+                progress,
+                timings,
+                true,
+            );
+            (outcome, slice_ms)
+        };
         let pilot_ms = pilot_start.elapsed().as_millis();
         let pilot_yield = match &outcome {
             Ok((_, stats, _)) => Some(stats.relations),
@@ -1271,7 +1336,7 @@ where
                 Err(FactorError::Cancelled) => "cancelled".to_string(),
                 Err(_) => "failed".to_string(),
             };
-            collector.record(
+            let elapsed = collector.record(
                 "race_pilot",
                 Some(degree),
                 now,
@@ -1281,6 +1346,7 @@ where
                     pilot_error_kind(&outcome),
                 ),
             );
+            bill_cpu(timings, options, elapsed)?;
         }
         match outcome {
             Ok(result) => return Ok(result),
@@ -1320,7 +1386,7 @@ where
             );
             if let Some(collector) = timings {
                 let status = if result.is_ok() { "won" } else { "failed" };
-                collector.record(
+                let elapsed = collector.record(
                     "race_escalation",
                     Some(degree),
                     started,
@@ -1329,6 +1395,7 @@ where
                         optional_rate_text(rate)
                     ),
                 );
+                bill_cpu(timings, options, elapsed)?;
             }
             result
         }
@@ -1399,6 +1466,7 @@ where
                 "GNFS deadline exceeded".to_string(),
             ));
         }
+        check_cpu(timings, options)?;
         let base = {
             let timer = Timer::new(timings, "factor_base", Some(2));
             let value = FactorBase::build(
@@ -1424,6 +1492,7 @@ where
                 cancelled,
                 deadline,
                 progress,
+                timings,
             ) {
                 Ok(relations) => {
                     timer.finish(format!("attempt={attempt} relations={}", relations.len()));
@@ -1810,6 +1879,28 @@ fn budget_to_deadline(budget_ms: Option<u128>) -> Option<Instant> {
     Instant::now().checked_add(duration)
 }
 
+fn bill_cpu(
+    timings: Option<&TimingCollector>,
+    options: &FactorOptions,
+    elapsed_ms: u128,
+) -> Result<(), FactorError> {
+    if let Some(collector) = timings {
+        collector.add_cpu_ms(elapsed_ms, options.effective_workers());
+        collector.check_cpu_budget(options)?;
+    }
+    Ok(())
+}
+
+fn check_cpu(
+    timings: Option<&TimingCollector>,
+    options: &FactorOptions,
+) -> Result<(), FactorError> {
+    if let Some(collector) = timings {
+        collector.check_cpu_budget(options)?;
+    }
+    Ok(())
+}
+
 fn perfect_square(n: &Integer) -> Option<Integer> {
     let root = crate::prime::integer_sqrt(n);
     if &root * &root == *n {
@@ -2027,6 +2118,73 @@ mod factor_tests {
             better_pilot_pick(Some((3, 2.5, None)), 4, 1.0, None, 60_000),
             Some((3, 2.5, None))
         );
+    }
+
+    #[test]
+    fn prefilter_rejects_recorded_hw140_deg3_estimate() {
+        let n = super::parse_decimal("825344960245717185263001325382831186370797")
+            .expect("valid decimal");
+        let recorded = super::FactorOptions {
+            threads: Some(16),
+            ..super::FactorOptions::default()
+        };
+        assert!(super::preflight_collect_exceeds(&n, 3, &recorded));
+        let tiny = super::FactorOptions {
+            max_memory_mb: Some(1),
+            threads: Some(2),
+            ..super::FactorOptions::default()
+        };
+        assert!(super::preflight_collect_exceeds(&n, 3, &tiny));
+        assert!(super::preflight_collect_exceeds(&n, 4, &tiny));
+        assert!(super::preflight_collect_exceeds(&n, 5, &tiny));
+        let fitting = super::FactorOptions {
+            threads: Some(8),
+            ..super::FactorOptions::default()
+        };
+        let m = super::parse_decimal("770817968652704265841785071059").expect("valid decimal");
+        assert!(!super::preflight_collect_exceeds(&m, 3, &fitting));
+        assert!(!super::preflight_collect_exceeds(&n, 2, &tiny));
+    }
+
+    #[test]
+    fn prefilter_feeds_escalation_identically() {
+        let fed = super::note_pilot_for_escalation(None, None, 3, None, 0, true, None, 60_000);
+        assert_eq!(fed, (None, Some(3)));
+    }
+
+    #[test]
+    fn estimation_reject_skips_pilot_slice_without_collect() {
+        let n = super::parse_decimal("825344960245717185263001325382831186370797")
+            .expect("valid decimal");
+        let options = super::FactorOptions {
+            max_memory_mb: Some(1),
+            max_duration: Some(std::time::Duration::from_millis(500)),
+            threads: Some(2),
+            skip_preprocessing: true,
+            ..super::FactorOptions::default()
+        };
+        let collector = super::TimingCollector::default();
+        let _ = super::factor_collected(&n, &options, |_| Ok(()), &collector);
+        let rows = collector.snapshot();
+        assert!(
+            rows.iter().any(|entry| entry.stage == "race_pilot"
+                && entry.degree == Some(3)
+                && entry.detail.contains("err=ResourceLimit")),
+            "degree 3 must still feed the escalation pick"
+        );
+        assert!(
+            rows.iter().any(|entry| entry.stage == "race_pilot"
+                && entry.degree == Some(3)
+                && entry.detail.contains("slice_ms=0")),
+            "degree 3 must be skipped before any pilot slice runs"
+        );
+        for entry in rows.iter().filter(|entry| entry.degree == Some(3)) {
+            assert!(
+                entry.stage == "race_pilot" || entry.stage == "cascade_projection",
+                "degree 3 must do zero pre-slice work, got {}",
+                entry.stage
+            );
+        }
     }
 
     #[test]
@@ -2726,6 +2884,113 @@ mod snfs_tests {
                     coeffs.join(",")
                 );
             }
+        }
+    }
+}
+
+#[cfg(test)]
+mod cpu_budget_tests {
+    use super::{TimingCollector, parse_decimal};
+    use crate::options::FactorOptions;
+
+    #[test]
+    fn accumulator_charges_wall_times_threads() {
+        let collector = TimingCollector::default();
+        assert_eq!(collector.cpu_used_ms(), 0);
+        collector.add_cpu_ms(500, 16);
+        assert_eq!(collector.cpu_used_ms(), 8_000);
+        collector.add_cpu_ms(250, 4);
+        assert_eq!(collector.cpu_used_ms(), 9_000);
+    }
+
+    #[test]
+    fn accumulator_saturates_instead_of_wrapping() {
+        let collector = TimingCollector::default();
+        collector.add_cpu_ms(u128::MAX, 16);
+        assert_eq!(collector.cpu_used_ms(), u128::MAX);
+        collector.add_cpu_ms(1, 1);
+        assert_eq!(collector.cpu_used_ms(), u128::MAX);
+    }
+
+    #[test]
+    fn unset_cap_never_trips() {
+        let collector = TimingCollector::default();
+        collector.add_cpu_ms(60_000, 16);
+        assert!(
+            collector
+                .check_cpu_budget(&FactorOptions::default())
+                .is_ok()
+        );
+    }
+
+    #[test]
+    fn trip_reports_cpu_against_budget() {
+        let collector = TimingCollector::default();
+        let options = FactorOptions {
+            max_cpu_seconds: Some(1),
+            threads: Some(16),
+            ..FactorOptions::default()
+        };
+        assert!(collector.check_cpu_budget(&options).is_ok());
+        collector.add_cpu_ms(63, 16);
+        let error = collector
+            .check_cpu_budget(&options)
+            .expect_err("63 ms across 16 threads must exceed a 1 s cpu budget");
+        match error {
+            crate::FactorError::ResourceLimit(detail) => {
+                assert!(detail.contains("cpu time budget exceeded"), "{detail}");
+                assert!(detail.contains("1008"), "{detail}");
+                assert!(detail.contains("1000"), "{detail}");
+                assert!(detail.contains("cap 1 s"), "{detail}");
+            }
+            other => panic!("expected ResourceLimit, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn collectors_stay_independent_across_threads() {
+        let handles: Vec<_> = (0..8_u128)
+            .map(|index| {
+                std::thread::spawn(move || {
+                    let collector = TimingCollector::default();
+                    collector.add_cpu_ms(100 + index, 4);
+                    collector.cpu_used_ms()
+                })
+            })
+            .collect();
+        let mut totals: Vec<u128> = handles
+            .into_iter()
+            .map(|handle| handle.join().expect("worker joins"))
+            .collect();
+        totals.sort_unstable();
+        let expected: Vec<u128> = (0..8_u128).map(|index| (100 + index) * 4).collect();
+        assert_eq!(totals, expected);
+    }
+
+    #[test]
+    fn concurrent_factor_calls_keep_independent_budgets() {
+        let plain = std::thread::spawn(|| {
+            let n = parse_decimal("15").expect("valid decimal");
+            super::factor(&n, &FactorOptions::default()).map(|report| report.factors)
+        });
+        let capped = std::thread::spawn(|| {
+            let n = parse_decimal("15").expect("valid decimal");
+            let options = FactorOptions {
+                max_cpu_seconds: Some(0),
+                ..FactorOptions::default()
+            };
+            super::factor(&n, &options).map(|report| report.factors)
+        });
+        let plain_factors = plain
+            .join()
+            .expect("plain call joins")
+            .expect("plain factors");
+        assert_eq!(plain_factors, vec!["3".to_string(), "5".to_string()]);
+        let capped_outcome = capped.join().expect("capped call joins");
+        match &capped_outcome {
+            Err(crate::FactorError::ResourceLimit(detail))
+                if detail.contains("cpu time budget") => {}
+            other => panic!("zero cpu budget must trip immediately, got {other:?}"),
         }
     }
 }

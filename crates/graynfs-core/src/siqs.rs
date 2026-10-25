@@ -625,6 +625,20 @@ impl SiqsPolyCounters {
     }
 }
 
+pub(crate) fn siqs_rescue_floor(scores: &[u32]) -> u64 {
+    if scores.is_empty() {
+        return 0;
+    }
+    let mut ranked = scores.to_vec();
+    ranked.sort_unstable();
+    let rank = ranked.len().saturating_mul(20) / 100;
+    ranked[rank.min(ranked.len() - 1)] as u64
+}
+
+pub(crate) fn siqs_trial_redundant(prime: u64, always_trial: &[u64]) -> bool {
+    always_trial.contains(&prime)
+}
+
 fn split_residual_counted(
     rest: u64,
     splitters: &[u64],
@@ -752,12 +766,18 @@ fn classify_siqs_counted(
     };
     if let Some(mut rest) = magnitude.to_u64() {
         let start = Instant::now();
-        for prime in std::iter::once(&2_u64)
-            .chain(always_trial.iter())
-            .chain(trial_primes.iter())
-        {
+        for prime in std::iter::once(&2_u64).chain(always_trial.iter()) {
             if rest == 1 {
                 break;
+            }
+            strip_prime_u64(&mut rest, *prime, base, toggles, barrett, mask);
+        }
+        for prime in trial_primes.iter() {
+            if rest == 1 {
+                break;
+            }
+            if siqs_trial_redundant(*prime, always_trial) {
+                continue;
             }
             strip_prime_u64(&mut rest, *prime, base, toggles, barrett, mask);
         }
@@ -788,6 +808,9 @@ fn classify_siqs_counted(
             break;
         }
         let prime = prime_at(index);
+        if index > always_trial.len() && siqs_trial_redundant(prime, always_trial) {
+            continue;
+        }
         let prime_value = Integer::from(prime);
         if residual < prime_value {
             continue;
@@ -806,7 +829,12 @@ fn classify_siqs_counted(
                 if rest == 1 {
                     break;
                 }
-                strip_prime_u64(&mut rest, prime_at(remaining), base, toggles, barrett, mask);
+                let trial_prime = prime_at(remaining);
+                if remaining > always_trial.len() && siqs_trial_redundant(trial_prime, always_trial)
+                {
+                    continue;
+                }
+                strip_prime_u64(&mut rest, trial_prime, base, toggles, barrett, mask);
             }
             demoted = Some(rest);
             break;
@@ -1410,18 +1438,29 @@ where
     // every other SIQS attempt measured), so the rescue passes earn their
     // keep. The pass histogram in the siqs_collect detail line monitors this.
     let ladder = [max_bits.saturating_sub(8), max_bits.saturating_sub(16), 0];
+    let mut rescue_floor = 0_u64;
+    let mut rescue_ready = false;
     let mut smooth: Vec<Relation> = Vec::new();
     let mut partials: Vec<(Relation, Vec<u64>)> = Vec::new();
     // X1b: one mask buffer per polynomial, cleared per candidate; only the
     // rare accepted relations pay for a clone.
     let mut scratch_mask = vec![0_u64; words];
-    for (pass, threshold) in ladder.iter().enumerate() {
+    for (pass, base_threshold) in ladder.iter().enumerate() {
+        let threshold = if pass == 2 {
+            if !rescue_ready {
+                rescue_floor = siqs_rescue_floor(&scores);
+                rescue_ready = true;
+            }
+            rescue_floor
+        } else {
+            *base_threshold
+        };
         let pass_slot = pass.min(2);
         for (offset, score) in scores.iter().enumerate() {
             if offset & 1023 == 0 {
                 check_cancelled(cancelled, deadline)?;
             }
-            if (*score as u64) < *threshold {
+            if (*score as u64) < threshold {
                 continue;
             }
             let x = Integer::from(offset as i64 - half_width);
@@ -1696,12 +1735,20 @@ where
     let barrett = SiqsBarrettTable::build(barrett_cover);
     let mut totals = SiqsPolyCounters::default();
     let mut polys_done = 0_usize;
+    let mut cpu_last = Instant::now();
     'rounds: loop {
         if cancelled.load(Ordering::Relaxed) {
             break;
         }
         if deadline.is_some_and(|limit| Instant::now() >= limit) {
             break;
+        }
+        if let Some(collector) = timings {
+            collector.add_cpu_ms(cpu_last.elapsed().as_millis(), workers);
+            cpu_last = Instant::now();
+            if collector.check_cpu_budget(options).is_err() {
+                break;
+            }
         }
         if next_poly > SIQS_POLY_INDEX_CAP {
             break;
@@ -2036,12 +2083,18 @@ where
         let mut next_poly = poly_floor;
         let mut polys_done = 0_usize;
         let mut totals = SiqsPolyCounters::default();
+        let mut cpu_last = Instant::now();
         'rounds: loop {
             if cancelled.load(Ordering::Relaxed) {
                 return Err(FactorError::Cancelled);
             }
             if attempt_deadline.is_some_and(|limit| Instant::now() >= limit) {
                 break;
+            }
+            if let Some(collector) = timings {
+                collector.add_cpu_ms(cpu_last.elapsed().as_millis(), workers);
+                cpu_last = Instant::now();
+                collector.check_cpu_budget(options)?;
             }
             if next_poly > SIQS_POLY_INDEX_CAP {
                 break;
@@ -3432,6 +3485,69 @@ mod siqs_tests {
             .map(|step| entry.saturating_mul(*step))
             .collect();
         assert_eq!(grown, vec![2800, 11200]);
+    }
+
+    #[test]
+    fn rescue_floor_tracks_measured_score_rank() {
+        assert_eq!(siqs_rescue_floor(&[]), 0);
+        assert_eq!(siqs_rescue_floor(&[41]), 41);
+        assert_eq!(siqs_rescue_floor(&[7, 7, 7, 7]), 7);
+        let scores: Vec<u32> = (0..100).collect();
+        assert_eq!(siqs_rescue_floor(&scores), 20);
+        let mut wide: Vec<u32> = (0..1401).collect();
+        wide.reverse();
+        assert_eq!(siqs_rescue_floor(&wide), 280);
+    }
+
+    #[test]
+    fn trial_redundant_flags_always_overlap_only() {
+        let always = vec![101_u64, 103, 107];
+        assert!(siqs_trial_redundant(101, &always));
+        assert!(siqs_trial_redundant(107, &always));
+        assert!(!siqs_trial_redundant(2, &always));
+        assert!(!siqs_trial_redundant(109, &always));
+        assert!(!siqs_trial_redundant(101, &[]));
+    }
+
+    #[test]
+    fn redundant_trial_skip_keeps_classify_bit_identical() {
+        let n = Integer::from(11_783_510_925_019_u64);
+        let base = FactorBase::for_siqs(&n, 2000, 2000);
+        let words = base.column_count().div_ceil(64);
+        let splitters = splitter_primes(&base, 50_000);
+        let always = vec![3_u64, 5, 101];
+        let with_dup = vec![3_u64, 5, 7, 101, 103];
+        let without_dup = vec![7_u64, 103];
+        let signed = Integer::from(2_u64)
+            * Integer::from(3_u64)
+            * Integer::from(5_u64)
+            * Integer::from(7_u64)
+            * Integer::from(101_u64)
+            * Integer::from(103_u64)
+            * Integer::from(10_007_u64);
+        let mut mask_dup = vec![0_u64; words];
+        let dup_out = classify_siqs(
+            &signed,
+            &base,
+            &mut mask_dup,
+            50_000,
+            &with_dup,
+            &always,
+            &splitters,
+        );
+        let mut mask_nodup = vec![0_u64; words];
+        let nodup_out = classify_siqs(
+            &signed,
+            &base,
+            &mut mask_nodup,
+            50_000,
+            &without_dup,
+            &always,
+            &splitters,
+        );
+        assert_eq!(mask_dup, mask_nodup);
+        let same = std::mem::discriminant(&dup_out) == std::mem::discriminant(&nodup_out);
+        assert!(same, "dup={dup_out:?} nodup={nodup_out:?}");
     }
 
     #[test]

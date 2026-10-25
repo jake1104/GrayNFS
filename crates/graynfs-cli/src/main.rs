@@ -53,6 +53,11 @@ struct Cli {
     timeout_seconds: u64,
     #[arg(
         long,
+        help = "Process-wide CPU-time budget in seconds (allocated wall-clock multiplied by threads); on expiry the run ends with a clean ResourceLimit"
+    )]
+    max_cpu_seconds: Option<u64>,
+    #[arg(
+        long,
         help = "Cap estimated sieve and matrix memory in MiB before allocating (default 1024)"
     )]
     max_memory_mb: Option<usize>,
@@ -111,6 +116,7 @@ fn options_from_cli(cli: &Cli) -> FactorOptions {
         large_prime_bound: cli.large_prime_bound,
         seed: cli.seed.unwrap_or(FactorOptions::default().seed),
         max_duration: Some(std::time::Duration::from_secs(cli.timeout_seconds)),
+        max_cpu_seconds: cli.max_cpu_seconds,
         max_memory_mb: cli.max_memory_mb,
         allow_fallback: !cli.no_fallback,
         skip_preprocessing: cli.skip_preprocessing,
@@ -528,5 +534,20 @@ mod tests {
         assert_eq!(bare.max_memory_mb, None);
         let bare_options = options_from_cli(&bare);
         assert_eq!(bare_options.max_memory_mb, None);
+    }
+
+    #[test]
+    fn cli_parses_max_cpu_seconds() {
+        let cli = Cli::try_parse_from(["graynfs", "100160063", "--max-cpu-seconds", "30"])
+            .expect("parse with cpu cap");
+        assert_eq!(cli.max_cpu_seconds, Some(30));
+        let options = options_from_cli(&cli);
+        assert_eq!(options.max_cpu_seconds, Some(30));
+        assert_eq!(options.cpu_budget_ms(), Some(30_000));
+        let bare = Cli::try_parse_from(["graynfs", "100160063"]).expect("parse without cpu cap");
+        assert_eq!(bare.max_cpu_seconds, None);
+        let bare_options = options_from_cli(&bare);
+        assert_eq!(bare_options.max_cpu_seconds, None);
+        assert_eq!(bare_options.cpu_budget_ms(), None);
     }
 }

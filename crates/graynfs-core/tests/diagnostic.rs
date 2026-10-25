@@ -32,6 +32,7 @@ fn inspect_quadratic_relations() {
         &AtomicBool::new(false),
         None,
         &mut progress,
+        None,
     )
     .expect("relations");
     let rank = matrix_rank(&relations, base.column_count(), 1);

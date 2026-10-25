@@ -27,6 +27,7 @@ fn attempt(number: &graynfs_core::Integer, options: &FactorOptions, polynomial: 
         &AtomicBool::new(false),
         None,
         &mut progress,
+        None,
     )
     .expect("relations");
     let rank = matrix_rank(&relations, base.column_count(), 1);

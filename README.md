@@ -1,6 +1,6 @@
-# GrayNFS · [![Version](https://img.shields.io/badge/version-v0.2.1-blue.svg)](CHANGELOG.md) [![License: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE.md) [![CI](https://github.com/jake1104/GrayNFS/actions/workflows/ci.yml/badge.svg)](https://github.com/jake1104/GrayNFS/actions/workflows/ci.yml) [![Python](https://img.shields.io/badge/python-3.8%2B-blue.svg)](python/graynfs/__init__.py)
+# GrayNFS · [![Version](https://img.shields.io/badge/version-v0.2.2-blue.svg)](CHANGELOG.md) [![License: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE.md) [![CI](https://github.com/jake1104/GrayNFS/actions/workflows/ci.yml/badge.svg)](https://github.com/jake1104/GrayNFS/actions/workflows/ci.yml) [![Python](https://img.shields.io/badge/python-3.8%2B-blue.svg)](python/graynfs/__init__.py)
 
-Pure-Rust adaptive integer factorization: a measured cascade (trial division, Fermat, p-1/p+1, ECM, SIQS, GNFS degrees 3-5); the fastest verified answer wins.
+Pure-Rust GNFS implementation (degrees 2-5) with trial division, Fermat, p-1/p+1, ECM front stages; the fastest verified answer wins.
 
 - **Adaptive cascade:** trial division, perfect powers, Fermat, Pollard p-1, Williams p+1, Brent Rho, Lenstra ECM, SIQS at degree 2, GNFS at degrees 3-5. Measured cost picks the winner; the fastest correct answer wins.
 - **Verified output:** every reported factorization is product-checked before it is returned. A wrong answer is a hard failure, never a slow one.
@@ -51,12 +51,12 @@ Prerequisites: a Rust stable toolchain plus a C compiler (the default allocator 
 cargo build -p graynfs-cli --release
 .\target\release\graynfs.exe 1000036000099
 python -m maturin build --release --out dist
-python -m pip install --force-reinstall --no-deps dist\graynfs-0.2.1-cp38-abi3-win_amd64.whl
+python -m pip install --force-reinstall --no-deps dist\graynfs-0.2.2-cp38-abi3-win_amd64.whl
 ```
 
 ## Usage
 
-CLI:
+### Factoring one integer (CLI)
 
 ```text
 > graynfs.exe 100160063 --timings
@@ -70,7 +70,7 @@ elapsed_ms: 1
 stage: fermat               degree: n/a  elapsed_ms: 0        divisor=10007
 ```
 
-Python:
+### Factoring one integer (Python)
 
 ```python
 import graynfs
@@ -80,31 +80,61 @@ graynfs.factor(100160063, degree=3)             # [10007, 10009]
 graynfs.factor_report(100160063)["factors"]     # [10007, 10009]
 graynfs.factor_report(100160063)["method"]      # 'fermat'
 graynfs.is_probable_prime(10007)                # True
-graynfs.version()                               # '0.2.1'
+graynfs.version()                               # '0.2.2'
 graynfs.stage_timings(100160063, degree=3)      # [{'stage': 'fermat', ...}]
 ```
 
-All outputs above were verified live against the installed 0.2.1 wheel.
-`graynfs.factor` and `graynfs.factor_with_progress` accept `degree: int | None
-= None` (auto-select), `rational_base_bound`, `algebraic_base_bound`,
-`sieve_a_bound`, `sieve_b_bound`, `timeout_seconds` (`None` = no deadline),
-`max_memory_mb` (`None` = 1 GiB budget), `allow_fallback`, and the toggles
-`use_fermat`, `use_squfof`, `use_pm1`, `use_pp1`, `use_ecm`, `use_mpqs`
-(default `True`), all keyword-only after `n`. `threads: int | None = None`
-selects the worker count (default: all logical cores); `perf_mode: bool =
-False` marks timing records without changing behavior. Factors return in
-ascending order. `factor_with_progress(n, callback, ...)` calls `callback`
-with `{stage, current, total, message}` per stage boundary; a non-callable
-callback raises `TypeError`. `stage_timings(n, *, ...)` returns `[{stage,
-degree, elapsed_ms, detail}]`. `factor_report(n, *, ...)` runs one call and
-returns `{factors, method, degree, relations, rank, elapsed_ms, timings}`.
-Failures raise `GrayNFSError` (a `ValueError`) with `.category` (`input`,
-`resource-limit`, `cancelled`, `internal`) and byte-identical text, e.g.
-`factor(0)` gives `category='input'`, a timed-out run gives
-`category='resource-limit'`; bad types raise `TypeError`. The Rust
-computation releases the Python GIL, so concurrent `factor` calls overlap.
+All outputs above were verified live against the installed 0.2.2 wheel.
+
+### Python keywords at a glance
+
+`graynfs.factor`, `graynfs.factor_with_progress`, `graynfs.stage_timings`, and `graynfs.factor_report` share one keyword surface, all keyword-only after `n`:
+
+| parameter | default | meaning |
+| :--- | :------ | :------ |
+| `degree` | `None` | auto-select; pass an int to force a fixed degree |
+| `rational_base_bound` | 2000 | bound of the rational factor base |
+| `algebraic_base_bound` | 2000 | bound of the algebraic factor base |
+| `sieve_a_bound` | 700 | sieve bound on `a` |
+| `sieve_b_bound` | 120 | sieve bound on `b` |
+| `large_prime_bound` | 50000 | upper bound of a residual large prime |
+| `timeout_seconds` | `None` | overall budget; `None` = no deadline |
+| `max_memory_mb` | `None` | memory cap in MiB; `None` = 1 GiB budget |
+| `max_cpu_seconds` | `None` | CPU-time cap in seconds; `None` = no budget |
+| `allow_fallback` | `True` | Pollard-Rho fallback on/off |
+| `skip_preprocessing` | `False` | skip the trial/Fermat/p-1/p+1/ECM probes |
+| `use_fermat`, `use_squfof`, `use_pm1`, `use_pp1`, `use_ecm`, `use_mpqs` | `True` | per-stage toggles |
+| `enable_double_large_primes` | `False` | keep 2- and 3-large-prime relations |
+| `seed` | `None` | pin the deterministic RNG |
+| `threads` | `None` | worker count; `None` = all logical cores |
+| `perf_mode` | `False` | mark timing records without changing behavior |
+
+- Factors return in ascending order.
+- `factor_with_progress(n, callback, ...)` calls `callback` with `{stage, current, total, message}` per stage boundary; a non-callable callback raises `TypeError`.
+- `stage_timings(n, *, ...)` returns `[{stage, degree, elapsed_ms, detail}]`.
+- `factor_report(n, *, ...)` runs one call and returns `{factors, method, degree, relations, rank, elapsed_ms, timings}`.
+- Failures raise `GrayNFSError` (a `ValueError`) with byte-identical text:
+
+| `.category` | when |
+| :--- | :--- |
+| `input` | bad input, e.g. `factor(0)` |
+| `resource-limit` | budget expiry, e.g. a timed-out run |
+| `cancelled` | process cancellation |
+| `internal` | unexpected internal failure |
+
+Bad types raise `TypeError`. The Rust computation releases the Python GIL, so concurrent `factor` calls overlap.
+
+### Batch factoring, primality, and determinism
+
+- **Batch:** `graynfs.factor_batch(ns, fail_fast=True, ...)` factors a list with the same keywords. It returns one factor list per input; on failure it either raises (`fail_fast=True`) or records the `GrayNFSError` in place (`False`). Verified: `factor_batch([100160063, 10007])` gives `[[10007, 10009], [10007]]`.
+- **Primality:** `graynfs.is_probable_prime(n)` is the BPSW gate (probable, not a proof); `is_probable_prime_fast(n, rounds=64)` tunes the Miller-Rabin rounds; `is_prime_proof(n, method='aks')` proves primality up to 64 bits and answers `False` above that cap. Verified: both gates return `True` for 10007.
+- **Determinism:** `seed` pins the deterministic RNG — the same seed repeats the same run (verified twice identical on `3426790303412814276981061`).
+- **CPU budget:** `max_cpu_seconds` caps process-wide CPU time (allocated wall-clock multiplied by threads). A 1 s cap on the 267-bit input ends in `resource-limit` in about 0.2 s of wall time instead of running to the 60 s timeout (verified live).
 
 ### Full CLI flag table
+
+<details>
+<summary>All flags with defaults</summary>
 
 | flag | default | meaning |
 | :--- | :------ | :------ |
@@ -117,6 +147,7 @@ computation releases the Python GIL, so concurrent `factor` calls overlap.
 | `--seed` | absent (0x9e3779b97f4a7c15) | seed for the deterministic RNG |
 | `--timeout-seconds` | 60 | overall budget; on expiry the run ends with a clean `ResourceLimit` and a non-zero exit |
 | `--max-memory-mb` | unset (1 GiB budget) | cap estimated sieve and matrix memory in MiB before allocating; exceeded estimates fail cleanly with `ResourceLimit` instead of allocating |
+| `--max-cpu-seconds` | unset (no budget) | process-wide CPU-time budget in seconds (allocated wall-clock multiplied by threads); on expiry the run ends with a clean `ResourceLimit` |
 | `--no-fallback` | off | disable the Pollard-Rho fallback |
 | `--skip-preprocessing` | off | skip trial division and the Fermat/p-1/p+1/ECM probes; the perfect-square and perfect-power reductions still run |
 | `--double-large-primes` | off | keep relations carrying two or three large primes and pair them cyclically; raises the yield on very large inputs but slows collection at smaller ones |
@@ -130,27 +161,32 @@ computation releases the Python GIL, so concurrent `factor` calls overlap.
 | `--threads` | all logical cores | worker thread count for the parallel stages |
 | `--perf-mode` | off | mark timing records as performance-mode runs without changing factorization behavior |
 | `--json` | off | emit the result as a single JSON object on stdout |
+| `--progress` | off | stream per-event factorization progress to stderr (`--json` stdout stays pure) |
 
-Bounds left at the defaults are auto-scaled by a digit-indexed parameter table
-for inputs above 36 digits (memory-bounded to 1 GiB with a clean
-`ResourceLimit`); passing any bound explicitly keeps it. The 37-60 digit rows
-share one uncapped table entry, and the degree-2 collect loop also escalates
-the sieve width on starvation (measured `InsufficientRelations` rounds only,
-explicit flags still win).
+</details>
+
+Bounds left at the defaults are auto-scaled:
+
+- Inputs above 36 digits use a digit-indexed parameter table (memory-bounded to 1 GiB with a clean `ResourceLimit`); passing any bound explicitly keeps it.
+- The 37-60 digit rows share one uncapped table entry.
+- The degree-2 collect loop also escalates the sieve width on starvation (measured `InsufficientRelations` rounds only, explicit flags still win).
 
 The report prints the input, the method, the selected degree, the verified
-factors, the relation count, the matrix rank, and the elapsed milliseconds.
-Exit code is 0 on success and non-zero on failure. A failed run prints
-`error: <category>: <detail>` on stderr (verified: `error: input: invalid
+factors, the relation count, the matrix rank, and the elapsed milliseconds:
+
+- Exit code is 0 on success and non-zero on failure.
+- A failed run prints `error: <category>: <detail>` on stderr (verified: `error: input: invalid
 decimal integer: ...` for `abc`; `error: resource-limit: ...` on budget
 expiry), where `category` is one of `input`, `resource-limit`,
-`cancelled`, or `internal`. With `--timings`, stage records print on stdout
-even for failed runs. With `--json` the same fields are emitted as a single
+`cancelled`, or `internal`.
+- With `--timings`, stage records print on stdout even for failed runs.
+- With `--json` the same fields are emitted as a single
 JSON object with keys `input`, `method`, `degree` (nullable), `factors`,
 `relations`, `rank`, and `elapsed_ms`, plus a `timings` array of `{stage,
 degree, elapsed_ms, detail}` only when `--timings` is also passed. A failed
 run instead emits `{"error": {"category": ..., "detail": ...}}` and exits
-non-zero. Verified output:
+non-zero.
+- With `--progress`, per-event lines stream to stderr while stdout keeps the final report (or pure `--json`). The CPU cap is charged as allocated wall-clock multiplied by threads at the existing checkpoints, so it trips in seconds rather than at the wall-clock timeout. Verified output:
 
 ```json
 {"degree":null,"elapsed_ms":1,"factors":["10007","10009"],"input":"100160063","method":"fermat","rank":0,"relations":0}
@@ -169,14 +205,16 @@ bit length of $N$:
 | $\ge 44$ | `[2, 3, 4]` |
 | $\ge 60$ | `[2, 3, 4, 5]` |
 
-A single candidate runs directly. Otherwise the candidates race: each receives
-a slice of `degree_race_fraction` (default `0.2`) of the remaining budget,
-and the first verified divisor wins immediately. The probe bound is
+A single candidate runs directly. Otherwise the candidates race:
+
+- Each receives a slice of `degree_race_fraction` (default `0.2`) of the remaining budget, and the first verified divisor wins immediately.
+- The probe bound is
 
 $$B(N) = \exp\left((\ln N)^{1/3}\,(\ln\ln N)^{2/3}\,(64/9)^{1/3}\right)$$
 
 seconds, clamped to one hour, used only when no deadline is configured (the
-Python default). If every candidate exhausts its slice, the lowest degree
+Python default).
+- If every candidate exhausts its slice, the lowest degree
 that ran out of time is re-run with the full remaining budget.
 
 ## Architecture
@@ -191,7 +229,7 @@ graph LR
 
 | crate | role |
 | :---- | :--- |
-| `graynfs-core` | adaptive integer factorization engine: measured cascade (`cascade`, `pm1`, `ecm`), preprocessing, sieving (SIQS degree 2 with QS fallback, GNFS degrees 3-5 as one engine), F2 linear algebra, algebraic square root, record-only SNFS special-form detector |
+| `graynfs-core` | GNFS implementation (SIQS degree 2 with QS fallback, GNFS degrees 3-5 as one engine) with trial division, Fermat, p-1/p+1, ECM front stages, preprocessing, sieving, F2 linear algebra, algebraic square root, record-only SNFS special-form detector |
 | `graynfs-cli` | `graynfs <N>` command-line front end |
 | `graynfs-py` | PyO3 extension module exposed as the `graynfs` Python package |
 | `graynfs-bench` | benchmark tiers with per-case deadlines and JSON output |
@@ -308,24 +346,32 @@ true, method `ecm`, total ~715 ms against the 60 s per-case deadline.
 
 ### Limits
 
-The square-root tail is mechanically bounded: a 12 s per-attempt ceiling
+Hard walls:
+
+- The square-root tail is mechanically bounded: a 12 s per-attempt ceiling
 (`ATTEMPT_CEILING_MS`, verified-gcd soundness kept) cut the deg3-skip median
-5.1x. Degree 6 is implemented and unit-tested but deliberately not a
+5.1x.
+- Degree 6 is implemented and unit-tested but deliberately not a
 candidate (Dickman parameter $u \approx 10$, $\rho(u) \approx 10^{-11}$).
-The SIQS wall stood between 100 and 105 bits; starvation-gated width
+- The SIQS wall stood between 100 and 105 bits; starvation-gated width
 escalation closed the 105-bit cell (3269/907 in ~2.2 s median on the
 forced-degree-2 route), while 110-bit+ and 90-digit inputs remain out of
-reach (smoothness wall). Lattice sieving is not implemented. There are no
-absolute bit-size dispatch boundaries: budgets are fractional slices of the
-remaining time and escalation follows measured cost. The cascade splits work
-by factor character: smooth `p-1`/`p+1` to Pollard/Williams, close factors to
+reach (smoothness wall). Lattice sieving is not implemented.
+- The memory budget is an estimate-based soft guard, not an RSS hard limit.
+- The quintic forced-path test covers 27-bit 100160063 only, not larger-input efficiency.
+- The 105-bit quarantine stays non-blocking with owner/review recorded. Knife-edge cells of the b70-deg3 kind require a longer explicit budget before any reproduced-number claim.
+
+How work splits:
+
+- There are no absolute bit-size dispatch boundaries: budgets are fractional slices of the
+remaining time and escalation follows measured cost.
+- The cascade splits work by factor character: smooth `p-1`/`p+1` to Pollard/Williams, close factors to
 Fermat, small factors to Brent Rho and ECM (Montgomery XZ, PRAC chains,
 unrolled REDC, prime-only stage-2 BSGS, 16-thread curves, stage-2 cap 16M),
 balanced mid-size inputs to the siever or the GNFS degree race, leftovers to
-the Rho fallback. The memory budget is an estimate-based soft guard, not an RSS hard limit.
-The quintic forced-path test covers 27-bit 100160063 only, not larger-input efficiency.
-The 105-bit quarantine stays non-blocking with owner/review recorded. Knife-edge cells of the b70-deg3 kind require a longer explicit budget before any reproduced-number claim.
-Default-path wins on small and medium inputs come from the cascade stages (trial division, Fermat, p-1/p+1, ECM, SIQS); for example, the 61-bit `1155285037654380637` row already records `Fermat 0 ms` on the default route against `1702 ms` on the forced degree-3 GNFS route. Forced degree-3+ GNFS routes are for research and comparison via `--skip-preprocessing --degree d`; the 105-bit hostile cell already records the forced-degree-2 route at `~2.2 s` while the full cascade resolves the same input via ECM in `~205 ms`. The per-stage `race_pilot` (`relations=`/`err=`) and `race_escalation` (`pick=`/`rate=`) timing records show which degree actually contended.
+the Rho fallback.
+- Default-path wins on small and medium inputs come from the cascade stages (trial division, Fermat, p-1/p+1, ECM, SIQS); for example, the 61-bit `1155285037654380637` row already records `Fermat 0 ms` on the default route against `1702 ms` on the forced degree-3 GNFS route. Forced degree-3+ GNFS routes are for research and comparison via `--skip-preprocessing --degree d`; the 105-bit hostile cell already records the forced-degree-2 route at `~2.2 s` while the full cascade resolves the same input via ECM in `~205 ms`.
+- The per-stage `race_pilot` (`relations=`/`err=`) and `race_escalation` (`pick=`/`rate=`) timing records show which degree actually contended.
 
 Frozen per-cell winners (`probe/v0.2.1.1.3-report.md:23-43`, medians copied exactly, no recomputation):
 
@@ -340,6 +386,22 @@ Frozen per-cell winners (`probe/v0.2.1.1.3-report.md:23-43`, medians copied exac
 
 GNFS 0/6 default-path: no frozen-corpus member is won by GNFS on the default route. This claim holds for the 6-member frozen corpus only, not for general inputs.
 
+Why not (investigated, declined with measurement):
+
+| idea | verdict |
+| :--- | :------ |
+| Lattice sieving + special-q + buckets + FK medium jumps | Declined: enumeration without a residual gate starves the classifier (production-scale 0/20553 miss sealed); residual-gated twin measured paired-usable-per-ms delta `<= 0` everywhere (NO-signal), so no engine work follows (`probe/idea-ext-cado.md`, `probe/idea-ext-msieve.md`). |
+| Wider large-prime bounds / 3-LP by default | Refused: measured LP slope flat (one extra usable relation at ~33x cost); the `lp^2` gate and the 1M splitter cap stay (`probe/idea-ext-msieve.md`). |
+| GNFS-first or a lowered crossover | Refused: the corpus sits at 18-91 digits, far below the ~97-digit GNFS floor; forced degree-3 on small inputs trickles (33 usable relations in 67 s) or rejects at estimation time (`probe/idea-ext-msieve.md`). |
+| Filtering (singleton / clique / merge) | Offline-only: recorded-matrix dumps shrink the pre-sieve input, but decisive runs stay `rows <= columns` with the filter inert, and rank is ~1.7% of the cell; no engine path until a smaller output with >=2x rank/slab win is measured (`probe/idea-ext-cado.md`). |
+| Block Wiedemann / block Lanczos | STOP: largest recorded matrix 5981x3977 with rank 443 ms vs smallest published sparse-LA deployment ~430k columns (~100x gap); per-step Gram overhead matches the measured penalty, so re-entry needs rank at >=15% of a reachable cell first (`probe/idea-ext-sparselA.md`, `probe/idea-ext-cado.md`). |
+| Characters + excess policy | Deferred until abundance: with rank-deficient (dependency-poor) cells first, the post-linear-algebra second-character filter only pays after dependencies are plentiful (`probe/idea-ext-cado.md`). |
+| Polynomial score-only refinements (Murphy-E style) | No-hope as score-only: uncalibrated E over-predicts measured relations 7.6x (deg3skip) / 33.9x (b70); only short-sieve measured yield closes the loop, never a better static formula (`probe/idea-ext-murphye.md`). |
+| GPU / RNS / AVX matrix multiply, parallel lingen | Wrong regime: `N < 6000` dense streaming wins; the Krylov-dominant tooling targets `N ~ 1e8` with months-scale cost (`probe/idea-ext-cado.md`, `probe/idea-ext-msieve.md`). |
+| Large sieve region (`I = 2^14-2^16`), multi-process sieve net, distributed savefiles | Opposite direction: the estimate already refuses above 1024 MiB before sieving starts, and the longest cell is a 120 s timeout, not a days-long sieve (`probe/idea-ext-cado.md`, `probe/idea-ext-msieve.md`). |
+| Degree 6 / JLSV / GJL / high-skewness machinery | Out of range: degree 6 is implemented and unit-tested but stays off the candidate list (Dickman `u ~= 10`, `rho(u) ~= 1e-11`); the heavyweight selection machinery targets 768-bit+ inputs (`probe/idea-ext-cado.md`). |
+| APR-CL proof on the hot path | Out of scope: BPSW stays the default prime gate (deterministic for u64) with opt-in AKS capped at 64 bits; large-matrix proof tooling activates past sizes never built here (`probe/idea-ext-msieve.md`). |
+
 ## Correctness
 
 ```powershell
@@ -347,9 +409,9 @@ cargo test --workspace
 python -m pytest -q python/tests
 ```
 
-Every bench and every run self-checks the product before reporting success, with final factors product-verified under probabilistic primality.
-BPSW is the default prime gate: deterministic for u64, probable (not a proof) otherwise. Only the opt-in AKS path proves primality, capped at 64 bits and never on the hot factoring path.
-`graynfs-bench --tier random` generates reproducible semiprimes with a seeded
+- Every bench and every run self-checks the product before reporting success, with final factors product-verified under probabilistic primality.
+- BPSW is the default prime gate: deterministic for u64, probable (not a proof) otherwise. Only the opt-in AKS path proves primality, capped at 64 bits and never on the hot factoring path.
+- `graynfs-bench --tier random` generates reproducible semiprimes with a seeded
 SplitMix64 generator and verifies every answer:
 
 ```powershell
@@ -358,9 +420,10 @@ target\release\graynfs-bench.exe --tier random --random-count 60 `
 ```
 
 Sixty cases spanning 34 to 48 bits all factor correctly on earlier trees, and
-no case ever produced a wrong answer: every failure was a clean
-`ResourceLimit`. Re-verified on the current tree 2026-10-17: far-apart 16/16
-and random 35/35, zero failures, all products verified.
+no case ever produced a wrong answer:
+
+- Every failure was a clean `ResourceLimit`.
+- Re-verified on the current tree 2026-10-17: far-apart 16/16 and random 35/35, zero failures, all products verified.
 
 ## Building
 
@@ -377,6 +440,18 @@ evidence only. Opt out explicitly:
 cargo build -p graynfs-cli --release --no-default-features
 ```
 
+## Release notes (v0.2.2 — 2026-10-26)
+
+0.x carries no compatibility promise.
+
+Version-marking release: spots moved 0.2.1 to 0.2.2; published benchmark medians unchanged.
+
+- SIQS internal gain kept: trial-division redundant-strip plus rescue floor, `pass_eval` -16.08% on frozen bit100 with `1878/945` and per-pass relations bit-identical.
+- Per-block LP switch and bucket sieve-mark killed with exact revert (-0.42% vs -20% bar; -4.2% with a +21.5% wall regression on bit100).
+- Opt-in `--max-cpu-seconds` budget (`None` default preserves behavior) plus an estimation pre-check before pilot-slice spend; REDC n=3/4 unrolled arms.
+- External refresh already in the tables below: YAFU 100-bit tie (gray 195 vs 213 median of 5), demo267 gray leads (506 vs 1194); g220/g240 YAFU solves where gray starves, zero GNFS wins either side.
+- Docs: README Why-not table recording the investigated exclusions with probe citations.
+
 ## Release notes (v0.2.1 — 2026-10-23)
 
 0.x carries no compatibility promise.
@@ -387,7 +462,7 @@ Version-bump release: no factorization-logic change in the bump; all benchmark c
 - Primality guarantee wording: BPSW is probable, not a proof, with deterministic Miller-Rabin underneath for u64; only the opt-in AKS path proves primality, capped at 64 bits and never on the hot factoring path.
 - Race observability: `race_pilot` records `relations=`/`err=` and `race_escalation` records `pick=`/`rate=`, so the contending degrees stay visible on every run.
 - Measured pilot pruning: zero-yield or SIQS-dominated degree-3+ pilots skip the full-budget escalation on measured signal only; the candidate-degree table is untouched.
-- Limits honesty: default-path wins stay attributed to the cascade stages while forced degree-3+ routes stay research-only; GNFS stays the nominal primary.
+- Limits honesty: default-path wins stay attributed to the winning stage while forced degree-3+ routes stay research-only.
 - Scheduler parity evidence: the joint ECM+SIQS driver against the ECM-alone fallback agrees on identical verified factor sets; envelope agreement is machinery validation with no speedup claims.
 - Proof default: `is_prime_proof` defaults to `aks`; over-64-bit inputs refuse cleanly with `False`.
 - Escalation rate wording: the `first_limited` escalation path logs `rate=none` instead of a fabricated zero.

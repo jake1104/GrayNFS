@@ -30,6 +30,7 @@ def factor(
     large_prime_bound: int = ...,
     enable_double_large_primes: bool = ...,
     seed: int | None = ...,
+    max_cpu_seconds: int | None = ...,
 ) -> list[int]: ...
 def factor_with_progress(
     n: int,
@@ -55,6 +56,7 @@ def factor_with_progress(
     large_prime_bound: int = ...,
     enable_double_large_primes: bool = ...,
     seed: int | None = ...,
+    max_cpu_seconds: int | None = ...,
 ) -> list[int]: ...
 def stage_timings(
     n: int,
@@ -79,6 +81,7 @@ def stage_timings(
     large_prime_bound: int = ...,
     enable_double_large_primes: bool = ...,
     seed: int | None = ...,
+    max_cpu_seconds: int | None = ...,
 ) -> list[dict[str, Any]]: ...
 def is_probable_prime(n: int) -> bool: ...
 def is_probable_prime_fast(n: int, rounds: int = ...) -> bool: ...
@@ -106,6 +109,7 @@ def factor_report(
     large_prime_bound: int = ...,
     enable_double_large_primes: bool = ...,
     seed: int | None = ...,
+    max_cpu_seconds: int | None = ...,
 ) -> dict[str, Any]: ...
 def version() -> str: ...
 def factor_batch(
@@ -132,4 +136,5 @@ def factor_batch(
     large_prime_bound: int = ...,
     enable_double_large_primes: bool = ...,
     seed: int | None = ...,
+    max_cpu_seconds: int | None = ...,
 ) -> list[list[int] | GrayNFSError]: ...

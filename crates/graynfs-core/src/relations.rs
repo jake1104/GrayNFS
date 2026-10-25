@@ -7,7 +7,7 @@ use num_traits::{One, Signed, ToPrimitive, Zero};
 use crate::algebraic::{QuadraticElement, QuadraticRing};
 use crate::base::FactorBase;
 use crate::error::FactorError;
-use crate::factor::ProgressEvent;
+use crate::factor::{ProgressEvent, TimingCollector};
 use crate::integer::{Integer, IntegerExt, integer_gcd};
 use crate::options::{FactorOptions, estimate_collect_bytes, estimate_live_bytes};
 use crate::polynomial::PolynomialPair;
@@ -66,6 +66,7 @@ struct PassContext<'a> {
     sieve_roots: &'a [SieveRoot],
     options: &'a FactorOptions,
     budget_stop: Option<&'a AtomicBool>,
+    collector: Option<&'a TimingCollector>,
 }
 
 fn pass_workers(rows: i64, options: &FactorOptions) -> usize {
@@ -77,6 +78,7 @@ fn pass_workers(rows: i64, options: &FactorOptions) -> usize {
     allowed.min(requested).max(1)
 }
 
+#[allow(clippy::too_many_arguments)]
 pub fn collect_relations<F>(
     _n: &Integer,
     polynomial: &PolynomialPair,
@@ -85,6 +87,7 @@ pub fn collect_relations<F>(
     cancelled: &AtomicBool,
     deadline: Option<Instant>,
     progress: &mut F,
+    timings: Option<&TimingCollector>,
 ) -> Result<Vec<Relation>, FactorError>
 where
     F: FnMut(&ProgressEvent) -> Result<(), FactorError>,
@@ -152,6 +155,7 @@ where
                 sieve_roots: &sieve_roots,
                 options,
                 budget_stop: None,
+                collector: timings,
             },
             progress,
         )?;
@@ -218,12 +222,18 @@ where
         let mut partials = Vec::new();
         let span = (max_b / PROGRESS_BATCHES as i64).max(1);
         let mut start = 1_i64;
+        let mut cpu_last = Instant::now();
         while start <= max_b {
             let end = start.saturating_add(span).min(max_b + 1);
             let output = collect_b_range(start, end, max_a, width, threshold, &context)?;
             smooth.extend(output.smooth);
             partials.extend(output.partials);
             start = end;
+            if let Some(collector) = context.collector {
+                collector.add_cpu_ms(cpu_last.elapsed().as_millis(), workers);
+                cpu_last = Instant::now();
+                collector.check_cpu_budget(context.options)?;
+            }
             let live_bytes =
                 estimate_live_bytes(context.base.column_count(), smooth.len(), partials.len(), 0);
             if live_bytes > context.options.memory_budget_bytes() {
@@ -271,8 +281,18 @@ where
             })
             .collect();
         drop(sender);
+        let mut cpu_last = Instant::now();
         while let Ok(found) = receiver.recv() {
             reported += found;
+            if let Some(collector) = context.collector {
+                collector.add_cpu_ms(cpu_last.elapsed().as_millis(), workers);
+                cpu_last = Instant::now();
+                if let Err(error) = collector.check_cpu_budget(context.options) {
+                    failure.get_or_insert(error);
+                    budget_stop.store(true, Ordering::Relaxed);
+                    break;
+                }
+            }
             let live_bytes = estimate_live_bytes(context.base.column_count(), reported, 0, 0);
             if live_bytes > context.options.memory_budget_bytes() {
                 failure.get_or_insert(FactorError::ResourceLimit(format!(
@@ -508,6 +528,7 @@ fn collect_b_range(
         sieve_roots,
         options,
         budget_stop,
+        collector: _,
     } = *context;
     let base_bound = base.algebraic_modulus_primes.last().copied().unwrap_or(1);
     let lp_bound = u64::try_from(options.large_prime_bound).unwrap_or(u64::MAX);
@@ -912,6 +933,7 @@ mod tests {
             &cancelled,
             None,
             &mut progress,
+            None,
         );
         assert!(matches!(outcome, Err(FactorError::ResourceLimit(_))));
     }
@@ -948,6 +970,7 @@ mod tests {
             sieve_roots: &sieve_roots,
             options: &capped,
             budget_stop: None,
+            collector: None,
         };
         let mut progress = |_: &ProgressEvent| Ok(());
         let outcome = collect_pass(max_a, max_b, 0, context, &mut progress);
@@ -979,6 +1002,7 @@ mod tests {
             &cancelled,
             None,
             &mut progress,
+            None,
         );
         assert!(!matches!(outcome, Err(FactorError::ResourceLimit(_))));
     }

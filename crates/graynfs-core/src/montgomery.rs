@@ -84,6 +84,8 @@ impl Montgomery {
         debug_assert_eq!(middle.len(), 2 * self.limbs + 2);
         match self.limbs {
             2 => self.cios_into::<2>(out, left, right, middle),
+            3 => self.cios_into::<3>(out, left, right, middle),
+            4 => self.cios_into::<4>(out, left, right, middle),
             5 => self.cios_into::<5>(out, left, right, middle),
             _ => self.cios_into_dyn(out, left, right, middle),
         }
@@ -319,6 +321,60 @@ mod montgomery_tests {
                 let difference = field.convert_out(&field.subtract(&left_mont, &right_mont));
                 assert_eq!(difference, (left.clone() - &right).rem_euclid(&modulus));
             }
+        }
+    }
+
+    #[test]
+    fn unrolled_n34_matches_dyn() {
+        let mut state = 0x9E3779B97F4A7C15_u64;
+        for modulus_bits in [129_u32, 140, 160, 192, 193, 200, 250, 256] {
+            let modulus = random_integer(&mut state, modulus_bits)
+                | (Integer::from(1) << (modulus_bits - 1))
+                | Integer::from(1);
+            let field = Montgomery::new(&modulus).expect("odd modulus");
+            let limbs = field.limbs();
+            assert!(limbs == 3 || limbs == 4);
+            for _ in 0..100 {
+                let left_raw = random_integer(&mut state, modulus_bits + 2) % &modulus;
+                let right_raw = random_integer(&mut state, modulus_bits + 2) % &modulus;
+                let left_mont = field.convert_in(&left_raw);
+                let right_mont = field.convert_in(&right_raw);
+                let mut out_kernel = vec![0_u64; limbs];
+                let mut out_dyn = vec![0_u64; limbs];
+                let mut mid_kernel = vec![0_u64; 2 * limbs + 2];
+                let mut mid_dyn = vec![0_u64; 2 * limbs + 2];
+                match limbs {
+                    3 => field.cios_into::<3>(
+                        &mut out_kernel,
+                        &left_mont,
+                        &right_mont,
+                        &mut mid_kernel,
+                    ),
+                    4 => field.cios_into::<4>(
+                        &mut out_kernel,
+                        &left_mont,
+                        &right_mont,
+                        &mut mid_kernel,
+                    ),
+                    _ => unreachable!(),
+                }
+                field.cios_into_dyn(&mut out_dyn, &left_mont, &right_mont, &mut mid_dyn);
+                assert_eq!(out_kernel, out_dyn);
+                let dispatch = field.multiply(&left_mont, &right_mont);
+                assert_eq!(dispatch, out_dyn);
+            }
+        }
+    }
+
+    #[test]
+    fn dispatch_covers_n34() {
+        let src: String = include_str!("montgomery.rs")
+            .chars()
+            .filter(|c| !c.is_whitespace())
+            .collect();
+        for limbs in [3, 4] {
+            let arm: String = format!("{limbs}=>self.cios_into::<{limbs}>(out,left,right,middle)");
+            assert!(src.contains(&arm), "missing dispatch arm {limbs}");
         }
     }
 
