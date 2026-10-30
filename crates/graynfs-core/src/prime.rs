@@ -41,6 +41,31 @@ pub fn small_primes() -> &'static [u64] {
     TABLE.get_or_init(|| sieve_primes(10_000))
 }
 
+pub fn trial_barrett_mu(prime: u64) -> u64 {
+    ((1_u128 << 64) / prime as u128) as u64
+}
+
+pub fn trial_barrett_remainder(value: u64, prime: u64, mu: u64) -> u64 {
+    let quotient = ((value as u128 * mu as u128) >> 64) as u64;
+    let mut remainder = value - quotient * prime;
+    if remainder >= prime {
+        remainder -= prime;
+    }
+    debug_assert!(remainder < prime);
+    debug_assert_eq!(remainder, value % prime);
+    remainder
+}
+
+pub fn small_trial_mu() -> &'static [u64] {
+    static TABLE: OnceLock<Vec<u64>> = OnceLock::new();
+    TABLE.get_or_init(|| {
+        small_primes()
+            .iter()
+            .map(|prime| trial_barrett_mu(*prime))
+            .collect()
+    })
+}
+
 pub fn sieve_primes(limit: usize) -> Vec<u64> {
     if limit < 2 {
         return Vec::new();
@@ -1380,6 +1405,71 @@ mod aks_tests {
                 "aks split at {small}"
             );
             assert_eq!(is_prime_u64(small), expected, "sieve split at {small}");
+        }
+    }
+}
+
+#[cfg(test)]
+mod trial_barrett_tests {
+    use super::*;
+
+    #[test]
+    fn mu_table_covers_small_prime_table() {
+        let primes = small_primes();
+        let mus = small_trial_mu();
+        assert_eq!(primes.len(), mus.len());
+        assert_eq!(primes.first(), Some(&2_u64));
+        assert!(primes.contains(&9_973));
+        for (prime, mu) in primes.iter().zip(mus.iter()) {
+            assert_eq!(*mu, trial_barrett_mu(*prime));
+        }
+    }
+
+    #[test]
+    fn remainder_matches_native_on_boundaries() {
+        let primes = small_primes();
+        let mus = small_trial_mu();
+        let mut values: Vec<u64> = vec![0, 1, 2, 3, 9_999, 10_000, 10_001];
+        for prime in primes.iter() {
+            values.push(*prime);
+            values.push(prime.saturating_sub(1));
+            values.push(prime.saturating_add(1));
+        }
+        values.push(u64::MAX - 1);
+        values.push(u64::MAX);
+        for (prime, mu) in primes.iter().zip(mus.iter()) {
+            for value in values.iter() {
+                assert_eq!(
+                    trial_barrett_remainder(*value, *prime, *mu),
+                    value % prime,
+                    "barrett split at value={value} prime={prime}"
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn remainder_matches_native_on_u64_max_corpus() {
+        let primes = small_primes();
+        let mus = small_trial_mu();
+        let corpus: [u64; 8] = [
+            u64::MAX,
+            u64::MAX - 1,
+            u64::MAX - 1_000,
+            18_446_744_073_709_551_557,
+            9_223_372_036_854_775_807,
+            4_294_967_291,
+            240,
+            145,
+        ];
+        for (prime, mu) in primes.iter().zip(mus.iter()) {
+            for value in corpus.iter() {
+                assert_eq!(
+                    trial_barrett_remainder(*value, *prime, *mu),
+                    value % prime,
+                    "u64-max split at value={value} prime={prime}"
+                );
+            }
         }
     }
 }

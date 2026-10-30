@@ -530,63 +530,6 @@ pub fn mod_inverse(value: u64, modulus: u64) -> u64 {
     (t as u64) % modulus
 }
 
-pub fn is_irreducible_binomial(degree: usize, constant: u64) -> bool {
-    if degree < 2 {
-        return false;
-    }
-    let mut value = constant;
-    for prime in 2..=degree as u64 {
-        if !(degree as u64).is_multiple_of(prime)
-            || prime == degree as u64 && !is_prime_small(prime)
-        {
-            continue;
-        }
-        if is_prime_small(prime) && perfect_power(value, prime) {
-            return false;
-        }
-        value = value.min(prime);
-    }
-    if degree.is_multiple_of(4) {
-        let four = 4_u64.checked_mul(constant);
-        if four.is_some_and(|value| perfect_power(value, 4)) {
-            return false;
-        }
-    }
-    true
-}
-
-fn is_prime_small(value: u64) -> bool {
-    if value < 2 {
-        return false;
-    }
-    let mut divisor = 2;
-    while divisor * divisor <= value {
-        if value.is_multiple_of(divisor) {
-            return value == divisor;
-        }
-        divisor += 1;
-    }
-    true
-}
-
-fn perfect_power(value: u64, exponent: u64) -> bool {
-    if exponent < 2 || value < 2 {
-        return false;
-    }
-    let mut low = 2_u64;
-    let mut high = value;
-    while low <= high {
-        let middle = low + (high - low) / 2;
-        let result = middle.checked_pow(exponent as u32);
-        match result {
-            Some(result) if result == value => return true,
-            Some(result) if result < value => low = middle + 1,
-            _ => high = middle.saturating_sub(1),
-        }
-    }
-    false
-}
-
 pub fn homogeneous(coefficients: &[u128], a: &u128, b: &u128) -> u128 {
     let degree = coefficients.len() - 1;
     let mut result = 0_u128;
@@ -595,24 +538,4 @@ pub fn homogeneous(coefficients: &[u128], a: &u128, b: &u128) -> u128 {
     }
     let _ = degree;
     result
-}
-
-pub fn is_zero_vector(values: &[u64]) -> bool {
-    values.iter().all(|value| *value == 0)
-}
-
-pub fn zero_modulus_vector(length: usize) -> Vec<u64> {
-    vec![0; length]
-}
-
-pub fn is_zero_usize(values: &[usize]) -> bool {
-    values.iter().all(|value| *value == 0)
-}
-
-pub fn zero_modulus_usize(length: usize) -> Vec<usize> {
-    vec![0; length]
-}
-
-pub fn is_zero_bool(values: &[bool]) -> bool {
-    values.iter().all(|value| !*value)
 }

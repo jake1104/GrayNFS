@@ -51,7 +51,6 @@ fn build_options(
     max_memory_mb: Option<usize>,
     allow_fallback: bool,
     use_fermat: bool,
-    use_squfof: bool,
     use_pm1: bool,
     use_pp1: bool,
     use_ecm: bool,
@@ -79,7 +78,6 @@ fn build_options(
         skip_preprocessing,
         enable_double_large_primes,
         use_fermat,
-        use_squfof,
         use_pm1,
         use_pp1,
         use_ecm,
@@ -92,7 +90,7 @@ fn build_options(
 
 #[allow(clippy::too_many_arguments)]
 #[pyfunction]
-#[pyo3(signature = (n, degree=None, rational_base_bound=2000, algebraic_base_bound=2000, sieve_a_bound=700, sieve_b_bound=120, timeout_seconds=None, max_memory_mb=None, allow_fallback=true, use_fermat=true, use_squfof=true, use_pm1=true, use_pp1=true, use_ecm=true, use_mpqs=true, threads=None, perf_mode=false, skip_preprocessing=false, large_prime_bound=50000, enable_double_large_primes=false, seed=None, max_cpu_seconds=None))]
+#[pyo3(signature = (n, degree=None, rational_base_bound=2000, algebraic_base_bound=2000, sieve_a_bound=700, sieve_b_bound=120, timeout_seconds=None, max_memory_mb=None, allow_fallback=true, use_fermat=true, use_pm1=true, use_pp1=true, use_ecm=true, use_mpqs=true, threads=None, perf_mode=false, skip_preprocessing=false, large_prime_bound=50000, enable_double_large_primes=false, seed=None, max_cpu_seconds=None))]
 fn factor_decimal(
     py: Python<'_>,
     n: &str,
@@ -105,7 +103,6 @@ fn factor_decimal(
     max_memory_mb: Option<usize>,
     allow_fallback: bool,
     use_fermat: bool,
-    use_squfof: bool,
     use_pm1: bool,
     use_pp1: bool,
     use_ecm: bool,
@@ -129,7 +126,6 @@ fn factor_decimal(
         max_memory_mb,
         allow_fallback,
         use_fermat,
-        use_squfof,
         use_pm1,
         use_pp1,
         use_ecm,
@@ -150,7 +146,7 @@ fn factor_decimal(
 
 #[allow(clippy::too_many_arguments)]
 #[pyfunction]
-#[pyo3(signature = (n, callback=None, degree=None, rational_base_bound=2000, algebraic_base_bound=2000, sieve_a_bound=700, sieve_b_bound=120, timeout_seconds=None, max_memory_mb=None, allow_fallback=true, use_fermat=true, use_squfof=true, use_pm1=true, use_pp1=true, use_ecm=true, use_mpqs=true, threads=None, perf_mode=false, skip_preprocessing=false, large_prime_bound=50000, enable_double_large_primes=false, seed=None, max_cpu_seconds=None))]
+#[pyo3(signature = (n, callback=None, degree=None, rational_base_bound=2000, algebraic_base_bound=2000, sieve_a_bound=700, sieve_b_bound=120, timeout_seconds=None, max_memory_mb=None, allow_fallback=true, use_fermat=true, use_pm1=true, use_pp1=true, use_ecm=true, use_mpqs=true, threads=None, perf_mode=false, skip_preprocessing=false, large_prime_bound=50000, enable_double_large_primes=false, seed=None, max_cpu_seconds=None))]
 fn factor_with_progress_decimal(
     py: Python<'_>,
     n: &str,
@@ -164,7 +160,6 @@ fn factor_with_progress_decimal(
     max_memory_mb: Option<usize>,
     allow_fallback: bool,
     use_fermat: bool,
-    use_squfof: bool,
     use_pm1: bool,
     use_pp1: bool,
     use_ecm: bool,
@@ -188,7 +183,6 @@ fn factor_with_progress_decimal(
         max_memory_mb,
         allow_fallback,
         use_fermat,
-        use_squfof,
         use_pm1,
         use_pp1,
         use_ecm,
@@ -241,7 +235,6 @@ fn factor_with_progress_decimal(
             max_memory_mb,
             allow_fallback,
             use_fermat,
-            use_squfof,
             use_pm1,
             use_pp1,
             use_ecm,
@@ -271,7 +264,7 @@ fn is_probable_prime_fast_decimal(py: Python<'_>, n: &str, rounds: u64) -> PyRes
 }
 
 #[pyfunction]
-#[pyo3(signature = (n, method="bpsw"))]
+#[pyo3(signature = (n, method="aks"))]
 fn is_prime_proof_decimal(py: Python<'_>, n: &str, method: &str) -> PyResult<bool> {
     let value = parse_decimal(n).map_err(to_py_error)?;
     py.detach(|| match method {
@@ -296,7 +289,7 @@ fn is_prime_proof_decimal(py: Python<'_>, n: &str, method: &str) -> PyResult<boo
 
 #[allow(clippy::too_many_arguments)]
 #[pyfunction]
-#[pyo3(signature = (n, degree=None, rational_base_bound=2000, algebraic_base_bound=2000, sieve_a_bound=700, sieve_b_bound=120, timeout_seconds=None, max_memory_mb=None, allow_fallback=true, use_fermat=true, use_squfof=true, use_pm1=true, use_pp1=true, use_ecm=true, use_mpqs=true, threads=None, perf_mode=false, skip_preprocessing=false, large_prime_bound=50000, enable_double_large_primes=false, seed=None, max_cpu_seconds=None))]
+#[pyo3(signature = (n, degree=None, rational_base_bound=2000, algebraic_base_bound=2000, sieve_a_bound=700, sieve_b_bound=120, timeout_seconds=None, max_memory_mb=None, allow_fallback=true, use_fermat=true, use_pm1=true, use_pp1=true, use_ecm=true, use_mpqs=true, threads=None, perf_mode=false, skip_preprocessing=false, large_prime_bound=50000, enable_double_large_primes=false, seed=None, max_cpu_seconds=None))]
 fn stage_timings_decimal(
     py: Python<'_>,
     n: &str,
@@ -309,7 +302,6 @@ fn stage_timings_decimal(
     max_memory_mb: Option<usize>,
     allow_fallback: bool,
     use_fermat: bool,
-    use_squfof: bool,
     use_pm1: bool,
     use_pp1: bool,
     use_ecm: bool,
@@ -333,7 +325,6 @@ fn stage_timings_decimal(
         max_memory_mb,
         allow_fallback,
         use_fermat,
-        use_squfof,
         use_pm1,
         use_pp1,
         use_ecm,
@@ -358,7 +349,7 @@ fn stage_timings_decimal(
 
 #[allow(clippy::too_many_arguments)]
 #[pyfunction]
-#[pyo3(signature = (n, degree=None, rational_base_bound=2000, algebraic_base_bound=2000, sieve_a_bound=700, sieve_b_bound=120, timeout_seconds=None, max_memory_mb=None, allow_fallback=true, use_fermat=true, use_squfof=true, use_pm1=true, use_pp1=true, use_ecm=true, use_mpqs=true, threads=None, perf_mode=false, skip_preprocessing=false, large_prime_bound=50000, enable_double_large_primes=false, seed=None, max_cpu_seconds=None))]
+#[pyo3(signature = (n, degree=None, rational_base_bound=2000, algebraic_base_bound=2000, sieve_a_bound=700, sieve_b_bound=120, timeout_seconds=None, max_memory_mb=None, allow_fallback=true, use_fermat=true, use_pm1=true, use_pp1=true, use_ecm=true, use_mpqs=true, threads=None, perf_mode=false, skip_preprocessing=false, large_prime_bound=50000, enable_double_large_primes=false, seed=None, max_cpu_seconds=None))]
 fn factor_report_decimal(
     py: Python<'_>,
     n: &str,
@@ -371,7 +362,6 @@ fn factor_report_decimal(
     max_memory_mb: Option<usize>,
     allow_fallback: bool,
     use_fermat: bool,
-    use_squfof: bool,
     use_pm1: bool,
     use_pp1: bool,
     use_ecm: bool,
@@ -395,7 +385,6 @@ fn factor_report_decimal(
         max_memory_mb,
         allow_fallback,
         use_fermat,
-        use_squfof,
         use_pm1,
         use_pp1,
         use_ecm,
@@ -449,7 +438,6 @@ mod tests {
             true,
             true,
             true,
-            true,
             None,
             false,
             false,
@@ -483,7 +471,6 @@ mod tests {
             120,
             None,
             None,
-            true,
             true,
             true,
             true,

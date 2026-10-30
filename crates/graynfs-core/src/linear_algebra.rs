@@ -10,6 +10,12 @@ impl Masked for Relation {
     }
 }
 
+fn join_candidate_worker(
+    handle: std::thread::ScopedJoinHandle<'_, Vec<(usize, usize, Vec<u64>)>>,
+) -> Vec<(usize, usize, Vec<u64>)> {
+    handle.join().unwrap_or_default()
+}
+
 pub fn rank_and_dependencies<M: Masked>(
     relations: &[M],
     column_count: usize,
@@ -163,7 +169,7 @@ pub fn rank_and_dependencies<M: Masked>(
                 }));
             }
             for handle in handles {
-                candidates.extend(handle.join().expect("candidate worker panicked"));
+                candidates.extend(join_candidate_worker(handle));
             }
         });
     }
@@ -212,7 +218,7 @@ pub(crate) fn order_dependencies_by_cost(dependencies: &[Vec<usize>]) -> Vec<usi
 
 #[cfg(test)]
 mod tests {
-    use super::{Masked, order_dependencies_by_cost, rank_and_dependencies};
+    use super::{Masked, join_candidate_worker, order_dependencies_by_cost, rank_and_dependencies};
 
     struct TestRelation {
         mask: Vec<u64>,
@@ -228,6 +234,19 @@ mod tests {
         (0..count)
             .map(|_| TestRelation { mask: vec![word] })
             .collect()
+    }
+
+    #[test]
+    fn panicking_candidate_worker_falls_back_to_empty() {
+        std::thread::scope(|scope| {
+            let handle = scope.spawn(|| -> Vec<(usize, usize, Vec<u64>)> {
+                panic!("injected candidate worker panic");
+            });
+            let started = std::time::Instant::now();
+            let recovered = join_candidate_worker(handle);
+            assert!(recovered.is_empty());
+            assert_eq!(started.elapsed().as_secs(), 0);
+        });
     }
 
     #[test]

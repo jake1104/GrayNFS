@@ -1,3 +1,4 @@
+use std::f64::consts::LN_2;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::time::Instant;
 
@@ -165,6 +166,62 @@ fn egcd_inverse(value: &Integer, modulus: &Integer) -> Option<Integer> {
 pub(crate) struct SiqsSuitablePrime {
     pub(crate) prime: u64,
     pub(crate) gamma: u64,
+}
+
+pub(crate) const SIQS_MULTIPLIER_CANDIDATES: [u64; 46] = [
+    1, 2, 3, 5, 6, 7, 10, 11, 13, 14, 15, 17, 19, 21, 22, 23, 26, 29, 30, 31, 33, 34, 35, 37, 38,
+    39, 41, 42, 43, 46, 47, 51, 53, 55, 57, 58, 59, 61, 62, 65, 66, 67, 69, 70, 71, 73,
+];
+
+pub(crate) fn choose_siqs_multiplier(n: &Integer, primes: &[u64]) -> u64 {
+    let mut scores = [0.0_f64; SIQS_MULTIPLIER_CANDIDATES.len()];
+    let n_mod8 = (n % Integer::from(8)).to_u64_saturating();
+    for (index, candidate) in SIQS_MULTIPLIER_CANDIDATES.iter().enumerate() {
+        let mut score = 0.5 * (*candidate as f64).ln();
+        match (candidate * n_mod8) % 8 {
+            1 => score -= 2.0 * LN_2,
+            5 => score -= LN_2,
+            3 | 7 => score -= 0.5 * LN_2,
+            _ => {}
+        }
+        scores[index] = score;
+    }
+    for prime in primes.iter().copied() {
+        if prime < 3 {
+            continue;
+        }
+        let residue = (n % Integer::from(prime)).to_u64_saturating();
+        let contribution = (prime as f64).ln() / (prime as f64 - 1.0);
+        for (index, candidate) in SIQS_MULTIPLIER_CANDIDATES.iter().enumerate() {
+            let kn_mod = ((residue as u128 * *candidate as u128) % prime as u128) as u64;
+            if kn_mod == 0 {
+                scores[index] -= contribution;
+            } else if legendre(kn_mod, prime) == 1 {
+                scores[index] -= 2.0 * contribution;
+            }
+        }
+    }
+    let mut best = SIQS_MULTIPLIER_CANDIDATES[0];
+    let mut best_score = f64::INFINITY;
+    for (index, candidate) in SIQS_MULTIPLIER_CANDIDATES.iter().enumerate() {
+        if scores[index] < best_score {
+            best_score = scores[index];
+            best = *candidate;
+        }
+    }
+    best
+}
+
+pub(crate) fn siqs_map_multiplier_divisor(n: &Integer, divisor: &Integer) -> Option<Integer> {
+    if divisor <= &Integer::from(1) {
+        return None;
+    }
+    let mapped = integer_gcd(divisor, n);
+    if mapped > Integer::from(1) && &mapped < n && n % &mapped == Integer::from(0) {
+        Some(mapped)
+    } else {
+        None
+    }
 }
 
 /// Suitable-prime list built once per attempt (X1d). The prime sequence is
@@ -1664,8 +1721,15 @@ where
 {
     let mut working = options.clone();
     let factor_cap = resolve_siqs_table(n, &mut working);
+    let multiplier = choose_siqs_multiplier(n, &sieve_primes(working.rational_base_bound));
+    let scaled = n * Integer::from(multiplier);
+    let sieved: &Integer = if multiplier == 1 { n } else { &scaled };
     let memory_budget = siqs_memory_budget_bytes(options);
-    let base = FactorBase::for_siqs(n, working.rational_base_bound, working.algebraic_base_bound);
+    let base = FactorBase::for_siqs(
+        sieved,
+        working.rational_base_bound,
+        working.algebraic_base_bound,
+    );
     let columns = base.column_count();
     let half_width = match i64::try_from(working.sieve_a_bound) {
         Ok(value) if value > 0 => value,
@@ -1691,8 +1755,8 @@ where
         return (None, bank);
     }
     let interval_bits = (64 - (half_width as u64).leading_zeros()).max(1);
-    let target_a = Integer::from(1) << target_a_bits(n.bits(), interval_bits);
-    let suitable = suitable_primes(n, working.algebraic_base_bound);
+    let target_a = Integer::from(1) << target_a_bits(sieved.bits(), interval_bits);
+    let suitable = suitable_primes(sieved, working.algebraic_base_bound);
     let poly_floor = first_viable_poly_index(&suitable, &target_a, factor_cap);
     if poly_floor == usize::MAX {
         return (None, bank);
@@ -1703,7 +1767,7 @@ where
         relations.iter().map(|item| item.mask.clone()).collect();
     let mut lp_graph = LpGraph::new();
     let display: Option<PolynomialPair> =
-        generate_polynomial_from(n, &suitable, &target_a, 0, factor_cap).map(|poly| {
+        generate_polynomial_from(sieved, &suitable, &target_a, 0, factor_cap).map(|poly| {
             PolynomialPair {
                 degree: 2,
                 coefficients: vec![
@@ -1723,7 +1787,7 @@ where
         .chain(base.algebraic_modulus_primes.iter())
         .copied()
         .collect();
-    let gammas = SiqsGammaTable::build(n, &gamma_primes);
+    let gammas = SiqsGammaTable::build(sieved, &gamma_primes);
     let toggles = SiqsToggleIndex::build(&base);
     let barrett_cover = gamma_primes
         .iter()
@@ -1778,7 +1842,7 @@ where
                 handles.push(scope.spawn(move || {
                     let gen_start = Instant::now();
                     let poly = match generate_polynomial_from(
-                        n,
+                        sieved,
                         suitable_worker,
                         target_a_ref,
                         index * 3,
@@ -1801,7 +1865,7 @@ where
                     let gen_nanos = gen_start.elapsed().as_nanos() as u64;
                     let mut nop = |_: &ProgressEvent| Ok(());
                     let out = collect_one_poly(
-                        n,
+                        sieved,
                         &poly,
                         index as u64,
                         base_ref,
@@ -1855,7 +1919,7 @@ where
             }
             for (relation, lps) in partials {
                 let mut combined: Vec<Relation> = Vec::new();
-                lp_graph.ingest(relation, lps, n, &mut combined);
+                lp_graph.ingest(relation, lps, sieved, &mut combined);
                 totals.merge_count += combined.len() as u64;
                 for relation in combined {
                     push_unique(&mut seen_masks, &mut relations, relation);
@@ -1932,10 +1996,13 @@ where
         .enumerate()
     {
         let timer = Timer::new(timings, "siqs_sqrt", Some(2));
-        let attempt_result = siqs_extract_relations(n, &bank.relations, &dependencies[*index]);
+        let attempt_result = siqs_extract_relations(sieved, &bank.relations, &dependencies[*index]);
         let found = attempt_result.is_ok();
         timer.finish(format!("dependency={di} found={found}"));
         if let Ok(divisor) = attempt_result {
+            let Some(mapped) = siqs_map_multiplier_divisor(n, &divisor) else {
+                continue;
+            };
             let outcome = SiqsOutcome {
                 display: match display {
                     Some(pair) => pair,
@@ -1944,7 +2011,7 @@ where
                 relations: bank.relations.len(),
                 rank,
             };
-            let hit = (divisor, outcome);
+            let hit = (mapped, outcome);
             return (Some(hit), bank);
         }
     }
@@ -1964,6 +2031,9 @@ where
 {
     let mut working = options.clone();
     let factor_cap = resolve_siqs_table(n, &mut working);
+    let multiplier = choose_siqs_multiplier(n, &sieve_primes(working.rational_base_bound));
+    let scaled = n * Integer::from(multiplier);
+    let sieved: &Integer = if multiplier == 1 { n } else { &scaled };
     let memory_budget = siqs_memory_budget_bytes(options);
     let mut last_error = FactorError::SearchExhausted;
     let entry = working.clone();
@@ -1994,8 +2064,11 @@ where
         }
         let base = {
             let timer = Timer::new(timings, "siqs_base", Some(2));
-            let value =
-                FactorBase::for_siqs(n, working.rational_base_bound, working.algebraic_base_bound);
+            let value = FactorBase::for_siqs(
+                sieved,
+                working.rational_base_bound,
+                working.algebraic_base_bound,
+            );
             timer.finish(format!("columns={}", value.column_count()));
             value
         };
@@ -2013,17 +2086,17 @@ where
             ));
         }
         let interval_bits = (64 - (half_width as u64).leading_zeros()).max(1);
-        let target_a = Integer::from(1) << target_a_bits(n.bits(), interval_bits);
+        let target_a = Integer::from(1) << target_a_bits(sieved.bits(), interval_bits);
         let mut relations: Vec<Relation> = Vec::new();
         let mut seen_masks: std::collections::HashSet<Vec<u64>> = std::collections::HashSet::new();
         let mut lp_graph = LpGraph::new();
         // X1d: suitable-prime list (with cached square roots) built once per
         // attempt and shared read-only across workers, instead of one sieve
         // plus one sqrt-chain per generated polynomial.
-        let suitable = suitable_primes(n, working.algebraic_base_bound);
+        let suitable = suitable_primes(sieved, working.algebraic_base_bound);
         let suitable_ref: &[SiqsSuitablePrime] = &suitable;
         let display: Option<PolynomialPair> =
-            generate_polynomial_from(n, suitable_ref, &target_a, 0, factor_cap).map(|poly| {
+            generate_polynomial_from(sieved, suitable_ref, &target_a, 0, factor_cap).map(|poly| {
                 PolynomialPair {
                     degree: 2,
                     coefficients: vec![
@@ -2045,7 +2118,7 @@ where
             .chain(base.algebraic_modulus_primes.iter())
             .copied()
             .collect();
-        let gammas = SiqsGammaTable::build(n, &gamma_primes);
+        let gammas = SiqsGammaTable::build(sieved, &gamma_primes);
         // X1b: dense prime->column table shared read-only across workers.
         let toggles = SiqsToggleIndex::build(&base);
         // X1c: Barrett mu per prime; cover polynomial factors too (they are
@@ -2125,7 +2198,7 @@ where
                     handles.push(scope.spawn(move || {
                         let gen_start = Instant::now();
                         let poly = match generate_polynomial_from(
-                            n,
+                            sieved,
                             suitable_worker,
                             target_a_ref,
                             index * 3,
@@ -2151,7 +2224,7 @@ where
                         let gen_nanos = gen_start.elapsed().as_nanos() as u64;
                         let mut nop = |_: &ProgressEvent| Ok(());
                         let out = collect_one_poly(
-                            n,
+                            sieved,
                             &poly,
                             index as u64,
                             base_ref,
@@ -2208,7 +2281,7 @@ where
                 }
                 for (relation, lps) in partials {
                     let mut combined: Vec<Relation> = Vec::new();
-                    lp_graph.ingest(relation, lps, n, &mut combined);
+                    lp_graph.ingest(relation, lps, sieved, &mut combined);
                     totals.merge_count += combined.len() as u64;
                     for relation in combined {
                         push_unique(&mut seen_masks, &mut relations, relation);
@@ -2254,7 +2327,7 @@ where
             let timer = Timer::new(timings, "siqs_filter", Some(2));
             let (filtered, filter_stats) = if relations.len() > columns {
                 filter_relations_with_budget(
-                    n,
+                    sieved,
                     relations,
                     columns,
                     &SIQS_FILTER_MERGE_CAPS,
@@ -2343,12 +2416,14 @@ where
             .enumerate()
         {
             let timer = Timer::new(timings, "siqs_sqrt", Some(2));
-            let attempt_result = siqs_extract_relations(n, &relations, &dependencies[*index]);
+            let attempt_result = siqs_extract_relations(sieved, &relations, &dependencies[*index]);
             let found = attempt_result.is_ok();
             timer.finish(format!("dependency={di} found={found}"));
-            if let Ok(divisor) = attempt_result {
+            if let Ok(divisor) = attempt_result
+                && let Some(mapped) = siqs_map_multiplier_divisor(n, &divisor)
+            {
                 return Ok((
-                    divisor,
+                    mapped,
                     SiqsOutcome {
                         display: display.ok_or(FactorError::NoPolynomial)?,
                         relations: relations.len(),
@@ -3569,5 +3644,115 @@ mod siqs_tests {
             assert!(tight.prime_factors.len() <= 2);
             assert!((&tight.coeff_b * &tight.coeff_b - &n) % &tight.coeff_a == Integer::from(0));
         }
+    }
+
+    #[test]
+    fn multiplier_list_matches_surveyed_shape() {
+        assert_eq!(SIQS_MULTIPLIER_CANDIDATES.len(), 46);
+        assert_eq!(SIQS_MULTIPLIER_CANDIDATES[0], 1);
+        assert_eq!(*SIQS_MULTIPLIER_CANDIDATES.last().expect("nonempty"), 73);
+        let mut previous = 0;
+        for candidate in SIQS_MULTIPLIER_CANDIDATES {
+            assert!(candidate > previous);
+            previous = candidate;
+        }
+    }
+
+    #[test]
+    fn multiplier_choice_is_deterministic_and_listed() {
+        let n = Integer::from(11_783_510_925_019_u64);
+        let probe = sieve_primes(2000);
+        let first = choose_siqs_multiplier(&n, &probe);
+        assert_eq!(first, choose_siqs_multiplier(&n, &probe));
+        assert_eq!(first, choose_siqs_multiplier(&n, &probe));
+        assert!(SIQS_MULTIPLIER_CANDIDATES.contains(&first));
+    }
+
+    fn independent_multiplier_reference(n: &Integer, primes: &[u64]) -> u64 {
+        let mut best_gain = f64::NEG_INFINITY;
+        let mut best = SIQS_MULTIPLIER_CANDIDATES[0];
+        for candidate in SIQS_MULTIPLIER_CANDIDATES {
+            let mut gain = -0.5 * (candidate as f64).ln();
+            let kn_mod8 = (candidate * (n % Integer::from(8)).to_u64_saturating()) % 8;
+            if kn_mod8 == 1 {
+                gain += 2.0 * LN_2;
+            } else if kn_mod8 == 5 {
+                gain += LN_2;
+            } else if kn_mod8 == 3 || kn_mod8 == 7 {
+                gain += 0.5 * LN_2;
+            }
+            for prime in primes.iter().copied().filter(|p| *p >= 3) {
+                let residue = (n % Integer::from(prime)).to_u64_saturating();
+                let kn_mod = ((residue as u128 * candidate as u128) % prime as u128) as u64;
+                let single = (prime as f64).ln() / (prime as f64 - 1.0);
+                if kn_mod == 0 {
+                    gain += single;
+                } else if legendre(kn_mod, prime) == 1 {
+                    gain += 2.0 * single;
+                }
+            }
+            if gain > best_gain {
+                best_gain = gain;
+                best = candidate;
+            }
+        }
+        best
+    }
+
+    #[test]
+    fn multiplier_reference_implementation_agrees() {
+        let probe = sieve_primes(2000);
+        for raw in [
+            Integer::from(100_160_063_u64),
+            Integer::from(11_783_510_925_019_u64),
+            Integer::from(770_817_968_652_704_265_841_785_071_059_u128),
+        ] {
+            assert_eq!(
+                choose_siqs_multiplier(&raw, &probe),
+                independent_multiplier_reference(&raw, &probe)
+            );
+        }
+    }
+
+    #[test]
+    fn multiplier_hand_computed_single_prime_case_selects_one() {
+        let n = Integer::from(9_u64);
+        assert_eq!(choose_siqs_multiplier(&n, &[3]), 1);
+        assert_eq!(choose_siqs_multiplier(&n, &[3, 5]), 1);
+    }
+
+    #[test]
+    fn multiplier_empty_probe_boundary_inputs_select_one() {
+        for raw in [1_u64, 5, 9, 100_160_064] {
+            let n = Integer::from(raw);
+            assert_eq!(choose_siqs_multiplier(&n, &[]), 1, "n={raw}");
+        }
+    }
+
+    #[test]
+    fn multiplier_maps_divisor_back_to_cofactor() {
+        let n = Integer::from(91_u64);
+        assert_eq!(
+            siqs_map_multiplier_divisor(&n, &Integer::from(13_u64)),
+            Some(Integer::from(13_u64))
+        );
+        assert_eq!(
+            siqs_map_multiplier_divisor(&n, &Integer::from(77_u64)),
+            Some(Integer::from(7_u64))
+        );
+        assert_eq!(
+            siqs_map_multiplier_divisor(&n, &Integer::from(7_u64)),
+            Some(Integer::from(7_u64))
+        );
+        assert_eq!(
+            siqs_map_multiplier_divisor(&n, &Integer::from(11_u64)),
+            None
+        );
+        assert_eq!(
+            siqs_map_multiplier_divisor(&n, &Integer::from(91_u64)),
+            None
+        );
+        assert_eq!(siqs_map_multiplier_divisor(&n, &Integer::from(1_u64)), None);
+        assert_eq!(siqs_map_multiplier_divisor(&n, &Integer::from(0_u64)), None);
     }
 }

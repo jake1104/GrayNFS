@@ -1135,6 +1135,16 @@ fn pilot_error_kind(
 
 type RatedPilot = (usize, f64, Option<u128>);
 
+fn measured_select_ms(timings: Option<&TimingCollector>, degree: usize) -> Option<u128> {
+    let collector = timings?;
+    collector
+        .snapshot()
+        .iter()
+        .rev()
+        .find(|entry| entry.stage == "select_polynomial" && entry.degree == Some(degree))
+        .map(|entry| entry.elapsed_ms)
+}
+
 #[allow(clippy::too_many_arguments)]
 fn note_pilot_for_escalation(
     best_rated: Option<RatedPilot>,
@@ -1145,11 +1155,15 @@ fn note_pilot_for_escalation(
     timed_out: bool,
     relations_needed: Option<usize>,
     remaining_ms: u128,
+    select_ms: Option<u128>,
 ) -> (Option<RatedPilot>, Option<usize>) {
     let mut best = best_rated;
     let mut limited = first_limited;
     let rate = pilot_yield.map(|found| found as f64 / pilot_ms.max(1) as f64);
     let projected = match (relations_needed, rate) {
+        (Some(needed), Some(rate)) if degree >= 3 => {
+            crate::cascade::project_gnfs_cost_ms(needed, rate, select_ms)
+        }
         (Some(needed), Some(rate)) => crate::cascade::project_siqs_cost_ms(needed, rate),
         _ => None,
     };
@@ -1178,6 +1192,7 @@ fn better_pilot_pick(
     }
     let cheaper = match (current, projected_cost_ms) {
         (Some((_, _, Some(best))), Some(cost)) => cost < best,
+        (Some((_, _, None)), Some(_)) => true,
         _ => current.is_none_or(|(_, best, _)| rate > best),
     };
     if cheaper {
@@ -1194,6 +1209,26 @@ fn escalation_pick(
     best_rated
         .map(|(degree, rate, _)| (degree, "best_rated", Some(rate)))
         .or(first_limited.map(|degree| (degree, "first_limited", None)))
+}
+
+fn unaffordable_pilot_cost(
+    needed: Option<usize>,
+    rate: Option<f64>,
+    select_ms: Option<u128>,
+    remaining_ms: u128,
+) -> Option<u128> {
+    let (Some(needed), Some(rate)) = (needed, rate) else {
+        return None;
+    };
+    let cost = crate::cascade::project_gnfs_cost_ms(needed, rate, select_ms)?;
+    (cost > remaining_ms).then_some(cost)
+}
+
+fn escalation_has_no_rated_pick(
+    best_rated: Option<RatedPilot>,
+    first_limited: Option<usize>,
+) -> bool {
+    best_rated.is_none() && first_limited.is_some()
 }
 
 fn probe_budget(n: &Integer) -> Duration {
@@ -1238,6 +1273,8 @@ where
     let bound = deadline.unwrap_or_else(|| Instant::now() + probe_budget(n));
     let mut first_limited: Option<usize> = None;
     let mut best_rated: Option<RatedPilot> = None;
+    let mut floor_required: Option<usize> = None;
+    let mut floor_rate: Option<f64> = None;
     for &degree in candidates.iter() {
         if cancelled.load(Ordering::Relaxed) {
             return Err(FactorError::Cancelled);
@@ -1247,6 +1284,24 @@ where
             break;
         }
         let pilot_start = Instant::now();
+        if degree >= 3 {
+            let remaining_ms = bound.saturating_duration_since(pilot_start).as_millis();
+            if let Some(cost) =
+                unaffordable_pilot_cost(floor_required, floor_rate, None, remaining_ms)
+            {
+                if let Some(collector) = timings {
+                    collector.record(
+                        "race_pilot",
+                        Some(degree),
+                        pilot_start,
+                        format!(
+                            "slice_ms=0 skipped relations=none err=Skipped projected_gnfs_ms={cost} remaining_ms={remaining_ms}"
+                        ),
+                    );
+                }
+                continue;
+            }
+        }
         let (outcome, slice_ms) = if degree >= 3 && preflight_collect_exceeds(n, degree, options) {
             (
                 Err(general::collect_memory_error(options.memory_budget_bytes())),
@@ -1277,6 +1332,18 @@ where
             Err(FactorError::InsufficientRelations { required, .. }) => Some(*required),
             _ => None,
         };
+        let select_ms = measured_select_ms(timings, degree);
+        if degree >= 3 {
+            if let Some(required) = relations_needed {
+                floor_required = Some(floor_required.map_or(required, |floor| floor.min(required)));
+            }
+            if let Some(found) = pilot_yield {
+                let rate = found as f64 / pilot_ms.max(1) as f64;
+                if rate > 0.0 {
+                    floor_rate = Some(floor_rate.map_or(rate, |floor| floor.max(rate)));
+                }
+            }
+        }
         if let Some(found) = pilot_yield {
             let rate = found as f64 / pilot_ms.max(1) as f64;
             if let Some(collector) = timings {
@@ -1306,19 +1373,26 @@ where
                 (Some(needed), Some(rate)) => crate::cascade::project_siqs_cost_ms(needed, rate),
                 _ => None,
             };
+            let cost_gnfs_ms = match (relations_needed, pilot_rate) {
+                (Some(needed), Some(rate)) if degree >= 3 => {
+                    crate::cascade::project_gnfs_cost_ms(needed, rate, select_ms)
+                }
+                _ => None,
+            };
             let lower_cost = crate::cascade::projected_lower_cost(cost_ecm_next_ms, cost_siqs_ms);
             collector.record_elapsed(
                 "cascade_projection",
                 Some(degree),
                 0,
                 format!(
-                    "cost_ecm_ms={} cost_ecm_next_ms={} cost_siqs_ms={} relations_needed={} pilot_rate={} lower_cost={}",
+                    "cost_ecm_ms={} cost_ecm_next_ms={} cost_siqs_ms={} relations_needed={} pilot_rate={} lower_cost={} cost_gnfs_ms={}",
                     optional_u128_text(cost_ecm_ms),
                     optional_u128_text(cost_ecm_next_ms),
                     optional_u128_text(cost_siqs_ms),
                     optional_u128_text(relations_needed.map(|needed| needed as u128)),
                     optional_rate_text(pilot_rate),
                     lower_cost.unwrap_or("none"),
+                    optional_u128_text(cost_gnfs_ms),
                 ),
             );
             if let Some(needed) = relations_needed {
@@ -1361,6 +1435,7 @@ where
                     true,
                     relations_needed,
                     bound.saturating_duration_since(Instant::now()).as_millis(),
+                    select_ms,
                 );
             }
             Err(_) => {
@@ -1373,6 +1448,7 @@ where
                     false,
                     relations_needed,
                     bound.saturating_duration_since(Instant::now()).as_millis(),
+                    select_ms,
                 );
             }
         }
@@ -1380,6 +1456,22 @@ where
     let escalation = escalation_pick(best_rated, first_limited);
     match escalation {
         Some((degree, pick, rate)) => {
+            if escalation_has_no_rated_pick(best_rated, first_limited) {
+                if let Some(collector) = timings {
+                    collector.record(
+                        "race_escalation",
+                        Some(degree),
+                        Instant::now(),
+                        format!(
+                            "full budget skipped pick={pick} rate={} failed_degree={degree}",
+                            optional_rate_text(rate)
+                        ),
+                    );
+                }
+                return Err(FactorError::ResourceLimit(format!(
+                    "GNFS race escalation skipped: degree {degree} pilot failed with no rated affordable pick"
+                )));
+            }
             let started = Instant::now();
             let result = run_degree(
                 n, options, degree, cancelled, deadline, progress, timings, false,
@@ -2066,12 +2158,6 @@ pub fn probable_prime_fast(value: &Integer, rounds: u64) -> bool {
     crate::prime::is_probable_prime_fast(value, rounds)
 }
 
-pub fn default_deadline(options: &FactorOptions) -> Option<Instant> {
-    options
-        .max_duration
-        .map(|duration| Instant::now() + duration)
-}
-
 #[cfg(test)]
 mod factor_tests {
     use super::better_pilot_pick;
@@ -2148,7 +2234,8 @@ mod factor_tests {
 
     #[test]
     fn prefilter_feeds_escalation_identically() {
-        let fed = super::note_pilot_for_escalation(None, None, 3, None, 0, true, None, 60_000);
+        let fed =
+            super::note_pilot_for_escalation(None, None, 3, None, 0, true, None, 60_000, None);
         assert_eq!(fed, (None, Some(3)));
     }
 
@@ -2299,11 +2386,12 @@ mod factor_tests {
             false,
             Some(400),
             60_000,
+            None,
         );
         assert_eq!(best, Some((3, 2.0, Some(200))));
         assert_eq!(limited, None);
         let (best, limited) =
-            super::note_pilot_for_escalation(None, None, 5, None, 50, true, None, 60_000);
+            super::note_pilot_for_escalation(None, None, 5, None, 50, true, None, 60_000, None);
         assert_eq!(best, None);
         assert_eq!(limited, Some(5));
         let (best, limited) = super::note_pilot_for_escalation(
@@ -2315,6 +2403,7 @@ mod factor_tests {
             false,
             None,
             60_000,
+            None,
         );
         assert_eq!(best, Some((2, 3.0, None)));
         assert_eq!(limited, Some(5));
@@ -2337,12 +2426,30 @@ mod factor_tests {
 
     #[test]
     fn pilot_cost_link_skips_dominated_escalation() {
-        let (best, limited) =
-            super::note_pilot_for_escalation(None, None, 3, Some(0), 50, false, Some(500), 60_000);
+        let (best, limited) = super::note_pilot_for_escalation(
+            None,
+            None,
+            3,
+            Some(0),
+            50,
+            false,
+            Some(500),
+            60_000,
+            None,
+        );
         assert_eq!(best, None);
         assert_eq!(limited, None);
-        let (best, limited) =
-            super::note_pilot_for_escalation(None, None, 3, Some(0), 50, true, Some(500), 60_000);
+        let (best, limited) = super::note_pilot_for_escalation(
+            None,
+            None,
+            3,
+            Some(0),
+            50,
+            true,
+            Some(500),
+            60_000,
+            None,
+        );
         assert_eq!(best, None);
         assert_eq!(limited, None);
         assert_eq!(super::escalation_pick(best, limited), None);
@@ -2355,6 +2462,7 @@ mod factor_tests {
             false,
             Some(400),
             60_000,
+            None,
         );
         assert_eq!(best, Some((3, 2.0, Some(200))));
         let (best, limited) = super::note_pilot_for_escalation(
@@ -2366,6 +2474,7 @@ mod factor_tests {
             false,
             Some(300),
             60_000,
+            None,
         );
         assert_eq!(best, Some((2, 6.0, Some(50))));
         assert_eq!(limited, None);
@@ -2373,11 +2482,174 @@ mod factor_tests {
             super::escalation_pick(best, limited),
             Some((2, "best_rated", Some(6.0)))
         );
-        let (best, limited) =
-            super::note_pilot_for_escalation(None, None, 4, Some(100), 50, false, Some(400), 100);
+        let (best, limited) = super::note_pilot_for_escalation(
+            None,
+            None,
+            4,
+            Some(100),
+            50,
+            false,
+            Some(400),
+            100,
+            None,
+        );
         assert_eq!(best, None);
         assert_eq!(limited, None);
         assert_eq!(super::escalation_pick(best, limited), None);
+    }
+
+    #[test]
+    fn pilot_gnfs_cost_adds_measured_select() {
+        let (best, _) = super::note_pilot_for_escalation(
+            None,
+            None,
+            3,
+            Some(100),
+            50,
+            false,
+            Some(400),
+            60_000,
+            Some(30),
+        );
+        assert_eq!(best, Some((3, 2.0, Some(230))));
+        let (best, _) = super::note_pilot_for_escalation(
+            None,
+            None,
+            2,
+            Some(300),
+            50,
+            false,
+            Some(300),
+            60_000,
+            Some(30),
+        );
+        assert_eq!(best, Some((2, 6.0, Some(50))));
+    }
+
+    #[test]
+    fn pilot_skip_needs_a_measured_unaffordable_projection() {
+        assert_eq!(
+            super::unaffordable_pilot_cost(None, Some(2.0), None, 60_000),
+            None
+        );
+        assert_eq!(
+            super::unaffordable_pilot_cost(Some(400), None, None, 60_000),
+            None
+        );
+        assert_eq!(
+            super::unaffordable_pilot_cost(Some(0), Some(2.0), None, 100),
+            None
+        );
+        assert_eq!(
+            super::unaffordable_pilot_cost(Some(400), Some(0.0), None, 100),
+            None
+        );
+        assert_eq!(
+            super::unaffordable_pilot_cost(Some(400), Some(2.0), None, 60_000),
+            None
+        );
+        assert_eq!(
+            super::unaffordable_pilot_cost(Some(400), Some(2.0), None, 100),
+            Some(200)
+        );
+        assert_eq!(
+            super::unaffordable_pilot_cost(Some(400), Some(2.0), Some(50), 200),
+            Some(250)
+        );
+        assert_eq!(
+            super::unaffordable_pilot_cost(Some(400), Some(2.0), Some(50), 250),
+            None
+        );
+    }
+
+    #[test]
+    fn escalation_guard_fires_only_without_a_rated_pick() {
+        assert!(super::escalation_has_no_rated_pick(None, Some(2)));
+        assert!(!super::escalation_has_no_rated_pick(
+            Some((2, 3.0, None)),
+            Some(5)
+        ));
+        assert!(!super::escalation_has_no_rated_pick(
+            Some((2, 3.0, Some(50))),
+            None
+        ));
+        assert!(!super::escalation_has_no_rated_pick(None, None));
+    }
+
+    #[test]
+    fn unknown_cost_never_displaces_known_affordable() {
+        let known = Some((2, 6.0, Some(50)));
+        let (best, _) = super::note_pilot_for_escalation(
+            known,
+            None,
+            3,
+            Some(300),
+            50,
+            false,
+            None,
+            60_000,
+            None,
+        );
+        assert_eq!(best, known);
+        let (incumbent, _) = super::note_pilot_for_escalation(
+            None,
+            None,
+            3,
+            Some(500),
+            50,
+            false,
+            None,
+            60_000,
+            None,
+        );
+        assert_eq!(incumbent, Some((3, 10.0, None)));
+        let (best, _) = super::note_pilot_for_escalation(
+            incumbent,
+            None,
+            2,
+            Some(100),
+            50,
+            false,
+            Some(400),
+            60_000,
+            None,
+        );
+        assert_eq!(best, Some((2, 2.0, Some(200))));
+        assert_eq!(
+            super::escalation_pick(best, None),
+            Some((2, "best_rated", Some(2.0)))
+        );
+        let (best, limited) = super::note_pilot_for_escalation(
+            None,
+            None,
+            2,
+            Some(100),
+            50,
+            true,
+            Some(400),
+            60_000,
+            None,
+        );
+        let (best, limited) = super::note_pilot_for_escalation(
+            best,
+            limited,
+            3,
+            Some(100),
+            50,
+            true,
+            None,
+            60_000,
+            None,
+        );
+        assert_eq!(best, Some((2, 2.0, Some(200))));
+        assert_eq!(
+            super::escalation_pick(best, limited),
+            Some((2, "best_rated", Some(2.0)))
+        );
+        assert_eq!(
+            super::escalation_pick(None, limited),
+            Some((2, "first_limited", None))
+        );
     }
 
     #[test]
@@ -2651,6 +2923,73 @@ mod factor_tests {
                 "scheduler stage {name} leaked into method on joint input"
             );
         }
+    }
+
+    fn trial_oracle(n: &super::Integer) -> (Option<super::Integer>, u64) {
+        let mut checked = 0_u64;
+        let small_n = super::IntegerExt::to_u64_saturating(n);
+        let big_hit = |prime: u64| n % &super::Integer::from(prime) == super::Integer::from(0);
+        for prime in crate::prime::small_primes() {
+            checked += 1;
+            if big_hit(*prime) {
+                return (Some(super::Integer::from(*prime)), checked);
+            }
+            if prime
+                .checked_mul(*prime)
+                .is_some_and(|square| square > small_n)
+            {
+                break;
+            }
+        }
+        (None, checked)
+    }
+
+    #[test]
+    fn trial_division_matches_bigint_oracle_on_recorded_vectors() {
+        let decimals = [
+            "2",
+            "3",
+            "4",
+            "9",
+            "25",
+            "49",
+            "121",
+            "240",
+            "145",
+            "926",
+            "1177",
+            "9999",
+            "10000",
+            "10007",
+            "10403",
+            "999983",
+            "1000003",
+            "18446744073709551557",
+            "18446744073709551615",
+            "18446744073709551614",
+            "340282366920938463463374607431768211455",
+            "770817968652704265841785071059",
+            "3426790303412814276981061",
+            "1155285037654380637",
+        ];
+        for decimal in decimals {
+            let n = super::parse_decimal(decimal).expect("valid decimal");
+            assert_eq!(
+                super::trial_division(&n),
+                trial_oracle(&n),
+                "trial split at {decimal}"
+            );
+        }
+        for small in [0_u64, 1, 2, 9_999, 10_000, 10_001] {
+            let n = super::Integer::from(small);
+            assert_eq!(
+                super::trial_division(&n),
+                trial_oracle(&n),
+                "trial split at u64 {small}"
+            );
+        }
+        let wide = super::Integer::from(u64::MAX);
+        assert_eq!(super::trial_division(&wide), trial_oracle(&wide));
     }
 }
 

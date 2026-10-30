@@ -121,14 +121,14 @@ def check_repo(root):
         cargo_version,
     )
 
-    notes = re.search(
-        r"^##\s+Release notes\s+\(v" + VERSION_RE, readme_text, re.MULTILINE
-    )
+    pointer_heading = re.search(r"^##\s+Release notes\s*$", readme_text, re.MULTILINE)
+    pointer_url = "https://github.com/jake1104/GrayNFS/releases" in readme_text
+    pointer_found = "pointer-present" if (pointer_heading and pointer_url) else None
     record(
-        "README latest release-notes heading",
-        "%s (first ## Release notes (v<ver>))" % readme_path,
-        notes.group(1) if notes else None,
-        cargo_version,
+        "README release-notes pointer",
+        "%s (## Release notes + releases URL)" % readme_path,
+        pointer_found,
+        "pointer-present",
     )
 
     try:

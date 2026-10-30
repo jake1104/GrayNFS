@@ -68,7 +68,6 @@ def factor(
     max_memory_mb: int | None = None,
     allow_fallback: bool = True,
     use_fermat: bool = True,
-    use_squfof: bool = True,
     use_pm1: bool = True,
     use_pp1: bool = True,
     use_ecm: bool = True,
@@ -81,6 +80,7 @@ def factor(
     seed: int | None = None,
     max_cpu_seconds: int | None = None,
 ) -> list[int]:
+    """Factor n into ascending prime factors; keywords mirror the documented surface (None means auto or unset, True/False toggles keep or skip a stage)."""
     try:
         _validate_seed(seed)
         return [
@@ -96,7 +96,6 @@ def factor(
                 max_memory_mb,
                 allow_fallback,
                 use_fermat,
-                use_squfof,
                 use_pm1,
                 use_pp1,
                 use_ecm,
@@ -127,7 +126,6 @@ def factor_with_progress(
     max_memory_mb: int | None = None,
     allow_fallback: bool = True,
     use_fermat: bool = True,
-    use_squfof: bool = True,
     use_pm1: bool = True,
     use_pp1: bool = True,
     use_ecm: bool = True,
@@ -140,6 +138,7 @@ def factor_with_progress(
     seed: int | None = None,
     max_cpu_seconds: int | None = None,
 ) -> list[int]:
+    """Factor n like factor, but call callback({stage, current, total, message}) at each stage boundary; the callback is required here (the raw binding accepts None and falls back to a plain factor)."""
     if not callable(callback):
         raise TypeError("callback must be callable")
     try:
@@ -158,7 +157,6 @@ def factor_with_progress(
                 max_memory_mb,
                 allow_fallback,
                 use_fermat,
-                use_squfof,
                 use_pm1,
                 use_pp1,
                 use_ecm,
@@ -223,7 +221,6 @@ def stage_timings(
     max_memory_mb: int | None = None,
     allow_fallback: bool = True,
     use_fermat: bool = True,
-    use_squfof: bool = True,
     use_pm1: bool = True,
     use_pp1: bool = True,
     use_ecm: bool = True,
@@ -236,6 +233,7 @@ def stage_timings(
     seed: int | None = None,
     max_cpu_seconds: int | None = None,
 ) -> list[dict[str, Any]]:
+    """Return per-stage timing records [{stage, degree, elapsed_ms, detail}] for factoring n without printing."""
     try:
         _validate_seed(seed)
         return [
@@ -256,7 +254,6 @@ def stage_timings(
                 max_memory_mb,
                 allow_fallback,
                 use_fermat,
-                use_squfof,
                 use_pm1,
                 use_pp1,
                 use_ecm,
@@ -291,7 +288,6 @@ def factor_batch(
     max_memory_mb: int | None = None,
     allow_fallback: bool = True,
     use_fermat: bool = True,
-    use_squfof: bool = True,
     use_pm1: bool = True,
     use_pp1: bool = True,
     use_ecm: bool = True,
@@ -304,6 +300,7 @@ def factor_batch(
     seed: int | None = None,
     max_cpu_seconds: int | None = None,
 ) -> list[list[int] | GrayNFSError]:
+    """Factor each input in ns with the shared factor keywords; fail_fast=True raises on the first failure while False records the GrayNFSError in place."""
     results: list[list[int] | GrayNFSError] = []
     for value in ns:
         try:
@@ -319,7 +316,6 @@ def factor_batch(
                     max_memory_mb=max_memory_mb,
                     allow_fallback=allow_fallback,
                     use_fermat=use_fermat,
-                    use_squfof=use_squfof,
                     use_pm1=use_pm1,
                     use_pp1=use_pp1,
                     use_ecm=use_ecm,
@@ -352,7 +348,6 @@ def factor_report(
     max_memory_mb: int | None = None,
     allow_fallback: bool = True,
     use_fermat: bool = True,
-    use_squfof: bool = True,
     use_pm1: bool = True,
     use_pp1: bool = True,
     use_ecm: bool = True,
@@ -365,6 +360,7 @@ def factor_report(
     seed: int | None = None,
     max_cpu_seconds: int | None = None,
 ) -> dict[str, Any]:
+    """Factor n once and return {factors, method, degree, relations, rank, elapsed_ms, timings}."""
     try:
         _validate_seed(seed)
         raw = _graynfs.factor_report_decimal(
@@ -378,7 +374,6 @@ def factor_report(
             max_memory_mb,
             allow_fallback,
             use_fermat,
-            use_squfof,
             use_pm1,
             use_pp1,
             use_ecm,

@@ -10,7 +10,6 @@ pub mod general;
 pub mod hensel;
 pub mod integer;
 pub mod lattice;
-pub mod lattice_sieve;
 pub mod linear_algebra;
 pub mod montgomery;
 pub mod number_field;

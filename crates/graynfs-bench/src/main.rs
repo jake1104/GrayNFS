@@ -656,11 +656,19 @@ fn run_case(case: &Case, timeout_seconds: u64, threads: usize) -> Observation {
         Ok(report) => {
             observation.method = report.method;
             observation.factors = report.factors;
-            let product =
-                parse_decimal_product(&observation.factors).unwrap_or_else(|_| Integer::from(0));
-            observation.verified = product == case.value
-                && sorted_strings(&observation.factors) == sorted_strings(&observation.expected);
-            observation.status = status_for(observation.verified).to_string();
+            match parse_decimal_product(&observation.factors) {
+                Ok(product) => {
+                    observation.verified = product == case.value
+                        && sorted_strings(&observation.factors)
+                            == sorted_strings(&observation.expected);
+                    observation.status = status_for(observation.verified).to_string();
+                }
+                Err(parse_error) => {
+                    observation.verified = false;
+                    observation.status = "error".to_string();
+                    observation.error = Some(parse_error);
+                }
+            }
         }
         Err(error) => {
             observation.status = "error".to_string();

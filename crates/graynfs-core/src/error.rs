@@ -20,6 +20,20 @@ pub enum FactorError {
     ResourceLimit(String),
     #[error("integer factorization failed: {0}")]
     Factorization(String),
-    #[error("unsupported polynomial degree {0}; the current implementation requires degree 2")]
+    #[error("unsupported polynomial degree {0}; requires degree 2, 3, 4 or 5")]
     UnsupportedDegree(usize),
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn unsupported_degree_display_matches_supported_degrees() {
+        let message = FactorError::UnsupportedDegree(6).to_string();
+        assert_eq!(
+            message,
+            "unsupported polynomial degree 6; requires degree 2, 3, 4 or 5"
+        );
+    }
 }

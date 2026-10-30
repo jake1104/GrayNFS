@@ -95,7 +95,6 @@ pub struct FactorOptions {
     pub degree_race_fraction: f64,
     pub max_cpu_seconds: Option<u64>,
     pub use_fermat: bool,
-    pub use_squfof: bool,
     pub use_pm1: bool,
     pub use_pp1: bool,
     pub use_ecm: bool,
@@ -125,7 +124,6 @@ impl Default for FactorOptions {
             degree_race_fraction: 0.2,
             max_cpu_seconds: None,
             use_fermat: true,
-            use_squfof: true,
             use_pm1: true,
             use_pp1: true,
             use_ecm: true,
@@ -144,10 +142,6 @@ impl FactorOptions {
         }
     }
 
-    pub fn live_excess_bytes(&self, live_bytes: u64) -> u64 {
-        memory_excess_bytes(live_bytes, self.memory_budget_bytes())
-    }
-
     pub fn validate(&self) -> Result<(), crate::FactorError> {
         if let Some(degree) = self.degree
             && !(2..=5).contains(&degree)
@@ -155,11 +149,6 @@ impl FactorOptions {
             return Err(crate::FactorError::InvalidInput(format!(
                 "unsupported degree {degree}: supported degrees are 2, 3, 4 and 5"
             )));
-        }
-        if !self.use_squfof {
-            return Err(crate::FactorError::InvalidInput(
-                "use_squfof is reserved for a future SQUFOF stage and has no effect".to_string(),
-            ));
         }
         if !(0.05..=0.5).contains(&self.degree_race_fraction) {
             return Err(crate::FactorError::InvalidInput(
@@ -177,18 +166,6 @@ impl FactorOptions {
             ));
         }
         Ok(())
-    }
-
-    pub fn with_base_bounds(mut self, rational: usize, algebraic: usize) -> Self {
-        self.rational_base_bound = rational;
-        self.algebraic_base_bound = algebraic;
-        self
-    }
-
-    pub fn with_sieve_bounds(mut self, a: usize, b: usize) -> Self {
-        self.sieve_a_bound = a;
-        self.sieve_b_bound = b;
-        self
     }
 
     pub fn effective_workers(&self) -> usize {
@@ -346,15 +323,7 @@ mod tests {
     }
 
     #[test]
-    fn reserved_squfof_toggle_is_rejected() {
-        let options = FactorOptions {
-            use_squfof: false,
-            ..FactorOptions::default()
-        };
-        assert!(matches!(
-            options.validate(),
-            Err(crate::FactorError::InvalidInput(_))
-        ));
+    fn default_options_validate_without_squfof_toggle() {
         assert!(FactorOptions::default().validate().is_ok());
     }
 

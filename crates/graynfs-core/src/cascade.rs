@@ -4,7 +4,6 @@ use std::time::{Duration, Instant};
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 pub enum CascadeStage {
     Fermat,
-    Squfof,
     Pm1,
     Pp1,
     Ecm,
@@ -17,7 +16,6 @@ impl CascadeStage {
     pub fn name(self) -> &'static str {
         match self {
             CascadeStage::Fermat => "fermat",
-            CascadeStage::Squfof => "squfof",
             CascadeStage::Pm1 => "pm1",
             CascadeStage::Pp1 => "pp1",
             CascadeStage::Ecm => "ecm",
@@ -173,6 +171,22 @@ pub fn project_siqs_cost_ms(relations_needed: usize, relations_per_ms: f64) -> O
     let cost_ms = relations_needed as f64 / relations_per_ms;
     if cost_ms.is_finite() {
         Some(cost_ms.ceil() as u128)
+    } else {
+        None
+    }
+}
+
+pub fn project_gnfs_cost_ms(
+    relations_needed: usize,
+    relations_per_ms: f64,
+    select_ms: Option<u128>,
+) -> Option<u128> {
+    if relations_needed == 0 || !relations_per_ms.is_finite() || relations_per_ms <= 0.0 {
+        return None;
+    }
+    let cost_ms = relations_needed as f64 / relations_per_ms;
+    if cost_ms.is_finite() {
+        Some((cost_ms.ceil() as u128).saturating_add(select_ms.unwrap_or(0)))
     } else {
         None
     }
@@ -992,8 +1006,8 @@ mod cascade_tests {
     use super::fermat_iter_budget;
     use crate::cascade::{
         CascadeSignals, allocate_slices, cheap_ecm_plan, cheap_slice_ms, ecm_plan, escalate_digits,
-        project_ecm_cost_ms, project_ecm_cost_ms_for_digits, project_siqs_cost_ms,
-        projected_lower_cost, tranche_first_box,
+        project_ecm_cost_ms, project_ecm_cost_ms_for_digits, project_gnfs_cost_ms,
+        project_siqs_cost_ms, projected_lower_cost, tranche_first_box,
     };
     use crate::integer::Integer;
 
@@ -1042,6 +1056,26 @@ mod cascade_tests {
         assert_eq!(project_siqs_cost_ms(100, f64::NEG_INFINITY), None);
         assert_eq!(project_siqs_cost_ms(3000, 3.0), Some(1000));
         assert_eq!(project_siqs_cost_ms(3001, 3.0), Some(1001));
+    }
+
+    #[test]
+    fn gnfs_projection_requires_measurable_inputs() {
+        assert_eq!(project_gnfs_cost_ms(0, 1.0, None), None);
+        assert_eq!(project_gnfs_cost_ms(100, 0.0, None), None);
+        assert_eq!(project_gnfs_cost_ms(100, f64::NAN, None), None);
+        assert_eq!(project_gnfs_cost_ms(100, f64::NEG_INFINITY, None), None);
+        assert_eq!(project_gnfs_cost_ms(3000, 3.0, None), Some(1000));
+        assert_eq!(project_gnfs_cost_ms(3001, 3.0, None), Some(1001));
+        assert_eq!(project_gnfs_cost_ms(3000, 3.0, Some(50)), Some(1050));
+        assert_eq!(project_gnfs_cost_ms(3001, 3.0, Some(0)), Some(1001));
+        assert_eq!(
+            project_gnfs_cost_ms(1, 1.0, Some(u128::MAX)),
+            Some(u128::MAX)
+        );
+        assert_eq!(
+            project_gnfs_cost_ms(u64::MAX as usize, 1.0, Some(u128::MAX)),
+            Some(u128::MAX)
+        );
     }
 
     #[test]

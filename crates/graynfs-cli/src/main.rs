@@ -42,7 +42,7 @@ struct Cli {
     large_prime_bound: usize,
     #[arg(
         long,
-        help = "Seed for the deterministic RNG (default 0x9e3779b97f4a7c15)"
+        help = "Seed for the deterministic RNG (absent = 0x9e3779b97f4a7c15)"
     )]
     seed: Option<u64>,
     #[arg(
@@ -58,7 +58,7 @@ struct Cli {
     max_cpu_seconds: Option<u64>,
     #[arg(
         long,
-        help = "Cap estimated sieve and matrix memory in MiB before allocating (default 1024)"
+        help = "Cap estimated sieve and matrix memory in MiB before allocating (unset; 1 GiB budget)"
     )]
     max_memory_mb: Option<usize>,
     #[arg(long, help = "Disable the Pollard-Rho fallback")]
@@ -77,8 +77,6 @@ struct Cli {
     double_large_primes: bool,
     #[arg(long, help = "Skip the Fermat close-factor probe")]
     no_fermat: bool,
-    #[arg(long, hide = true)]
-    no_squfof: bool,
     #[arg(long, help = "Skip Pollard p-1")]
     no_pm1: bool,
     #[arg(long, help = "Skip Williams p+1")]
@@ -122,7 +120,6 @@ fn options_from_cli(cli: &Cli) -> FactorOptions {
         skip_preprocessing: cli.skip_preprocessing,
         enable_double_large_primes: cli.double_large_primes,
         use_fermat: !cli.no_fermat,
-        use_squfof: !cli.no_squfof,
         use_pm1: !cli.no_pm1,
         use_pp1: !cli.no_pp1,
         use_ecm: !cli.no_ecm,
@@ -480,13 +477,9 @@ mod tests {
     }
 
     #[test]
-    fn cli_no_squfof_still_parses_but_stays_reserved() {
-        let cli = Cli::try_parse_from(["graynfs", "100160063", "--no-squfof"])
-            .expect("hidden no-squfof flag still parses");
-        assert!(cli.no_squfof);
-        let options = options_from_cli(&cli);
-        assert!(!options.use_squfof);
-        assert!(options.validate().is_err());
+    fn cli_no_squfof_flag_is_rejected_as_unknown() {
+        let result = Cli::try_parse_from(["graynfs", "100160063", "--no-squfof"]);
+        assert!(result.is_err());
     }
 
     #[test]

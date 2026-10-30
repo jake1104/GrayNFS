@@ -64,6 +64,10 @@ jobs:
           python -m pytest -q python/tests
       - name: version-drift-guard
         run: python scripts/check_version.py
+      - name: api-surface-guard
+        run: python scripts/check_api_surface.py
+      - name: invariants-guard
+        run: python scripts/check_invariants.py
   gnfs-degrees-release:
     runs-on: windows-latest
     timeout-minutes: 60

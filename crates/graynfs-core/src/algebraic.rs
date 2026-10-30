@@ -134,20 +134,15 @@ impl QuadraticRing {
         let x = &value.x;
         let y = &value.y;
         if y.is_zero() {
-            let two = Integer::from(2);
-            if x % &two != Integer::from(0) {
+            if x < &Integer::from(0) {
                 return None;
             }
-            let half = x / &two;
-            if half < Integer::from(0) {
-                return None;
-            }
-            let root = integer_sqrt(&half);
-            if &root * &root != half {
+            let root = integer_sqrt(x);
+            if &root * &root != *x {
                 return None;
             }
             return Some(QuadraticElement {
-                x: &root * &two,
+                x: root,
                 y: Integer::from(0),
             });
         }

@@ -195,6 +195,7 @@ pub fn square_root(field: &ExtensionField, value: &[u64]) -> Option<Vec<u64>> {
     }
 }
 
+#[cfg(test)]
 pub fn multiplicative_order(field: &ExtensionField, value: &[u64]) -> u64 {
     let mut order = 1_u64;
     let mut current = field.normalize(value);
@@ -208,6 +209,7 @@ pub fn multiplicative_order(field: &ExtensionField, value: &[u64]) -> u64 {
     order
 }
 
+#[cfg(test)]
 pub fn verify_square_root(field: &ExtensionField, value: &[u64], root: &[u64]) -> bool {
     let squared = field.mul(root, root);
     field.equal(&squared, &field.normalize(value))

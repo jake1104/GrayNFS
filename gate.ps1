@@ -75,6 +75,8 @@ if ($Full) {
   Invoke-GateStep "wheel-install" { pip install --force-reinstall --no-deps $wheelPath }
   Invoke-GateStep "pytest" { python -m pytest -q python/tests }
   Invoke-GateStep "version-guard" { python scripts/check_version.py }
+  Invoke-GateStep "api-surface" { python scripts/check_api_surface.py }
+  Invoke-GateStep "invariants" { python scripts/check_invariants.py }
   # quintic-scope (2026.10.19.7.3): quintic pin is 27-bit 100160063 only;
   # 43-bit row 4606404410723 deferred (efficiency-only, 60 min budget).
   # wide_gnfs expects siqs; filter append-only, never narrow.
