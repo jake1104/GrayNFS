@@ -39,8 +39,9 @@ CELLS = [
         "n": HOSTILE105_N,
         "extra": ["--skip-preprocessing", "--degree", "2"],
         "method": "siqs",
-        "relations": 3269,
-        "rank": 907,
+        # 31.1 KEEP (2026-10-28): 1177/926 is standing identity, 3269/907 historical.
+        "relations": 1177,
+        "rank": 926,
         "ref_ms": 3432.0,
         "band": "multisecond",
     },
