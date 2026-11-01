@@ -217,11 +217,11 @@ fn factor_with_progress_decimal(
                             .call1(py, (event_dict,))
                             .map_err(|error| FactorError::Factorization(error.to_string()))
                             .and_then(|outcome| {
-                                if outcome.is_none(py) {
-                                    Ok(())
-                                } else if outcome.is_truthy(py).map_err(|error| {
-                                    FactorError::Factorization(error.to_string())
-                                })? {
+                                if outcome.is_none(py)
+                                    || outcome.is_truthy(py).map_err(|error| {
+                                        FactorError::Factorization(error.to_string())
+                                    })?
+                                {
                                     Ok(())
                                 } else {
                                     Err(FactorError::Cancelled)

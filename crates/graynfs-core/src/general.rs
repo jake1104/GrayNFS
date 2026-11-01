@@ -4027,7 +4027,7 @@ mod tests {
         let (_, dependencies) = rank_and_dependencies(&filtered.relations, 4, 1024, 2, 1);
         assert!(!dependencies.is_empty());
         for dependency in &dependencies {
-            let mut parity = vec![0u64; 1];
+            let mut parity = [0u64; 1];
             for row in dependency {
                 for source in &filtered.sources[*row] {
                     for (word, mask) in parity.iter_mut().zip(original_masks[*source].iter()) {
@@ -4299,11 +4299,11 @@ mod tests {
             filter_relation(11, &[1, 0, 1], vec![0b1100]),
         ];
         let filtered = filter_gnfs_relations(&field, relations, 4);
-        let mut weights = vec![0usize; 4];
+        let mut weights = [0usize; 4];
         for relation in &filtered.relations {
-            for column in 0..4 {
+            for (column, weight) in weights.iter_mut().enumerate() {
                 if relation.mask[0] & (1u64 << column) != 0 {
-                    weights[column] += 1;
+                    *weight += 1;
                 }
             }
         }
