@@ -11,6 +11,7 @@ import time
 
 BIT100_N = "770817968652704265841785071059"
 HOSTILE105_N = "35658606617546370626847644936101"
+DEG3SKIP_N = "1155285037654380637"
 
 
 CELLS = [
@@ -44,6 +45,16 @@ CELLS = [
         "rank": 926,
         "ref_ms": 3432.0,
         "band": "multisecond",
+    },
+    {
+        "name": "deg3skip-deg2",
+        "n": DEG3SKIP_N,
+        "extra": ["--skip-preprocessing", "--degree", "2"],
+        "method": "siqs",
+        "relations": 240,
+        "rank": 145,
+        "ref_ms": 15.0,
+        "band": "subsecond",
     },
 ]
 
@@ -206,7 +217,7 @@ def run_cell(bin_cmd, cell, reps, threads, timeout_seconds):
 
 
 def main():
-    parser = argparse.ArgumentParser(description="Frozen 3-cell perf smoke gate for GrayNFS release CLI")
+    parser = argparse.ArgumentParser(description="Frozen 4-cell perf smoke gate for GrayNFS release CLI")
     parser.add_argument("--bin", default=None, help="Release binary path, or full command line when it contains spaces")
     parser.add_argument("--reps", type=int, default=DEFAULT_REPS, help="Reps per cell (default 5)")
     parser.add_argument("--threads", type=int, default=DEFAULT_THREADS, help="CLI worker threads (default 16)")

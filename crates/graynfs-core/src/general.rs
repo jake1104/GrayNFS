@@ -663,7 +663,7 @@ fn gnfs_divisor_timed(
     };
     let bound = unit_search_bound(field.degree);
     let mut units: Option<Vec<Element>> = None;
-    let (mut relations, mut bank): (Vec<GeneralRelation>, PartialBank) = {
+    let (relations, mut bank): (Vec<GeneralRelation>, PartialBank) = {
         let timer = Timer::new(Some(collector), "relation_collection", Some(degree));
         let (complete, bank) = collect_relations(
             n,
@@ -721,6 +721,24 @@ fn gnfs_divisor_timed(
             return Err(error);
         }
     }
+    let filtered = {
+        let timer = Timer::new(Some(collector), "relation_filter", Some(degree));
+        let pre_rows = relations.len();
+        let filtered = filter_gnfs_relations(&field, relations, base.column_count());
+        let merged = filtered
+            .sources
+            .iter()
+            .filter(|sources| sources.len() > 1)
+            .count();
+        let square_inputs: usize = filtered.square_sources.iter().map(Vec::len).sum();
+        timer.finish(format!(
+            "rows={pre_rows} kept={} merged={merged} squares={} square_inputs={square_inputs}",
+            filtered.relations.len(),
+            filtered.squares.len()
+        ));
+        filtered
+    };
+    let mut relations = filtered.relations;
     let (mut rank, mut dependencies) = {
         let timer = Timer::new(Some(collector), "matrix_rank", Some(degree));
         let value = rank_and_dependencies(
@@ -733,7 +751,10 @@ fn gnfs_divisor_timed(
         timer.finish(format!("rank={} of {}", value.0, relations.len()));
         value
     };
-    if relations.len() <= rank && (!bank.singles.is_empty() || !bank.doubles.is_empty()) {
+    let squares = filtered.squares;
+    if drain_needed(relations.len(), rank, base.column_count())
+        && (!bank.singles.is_empty() || !bank.doubles.is_empty())
+    {
         let drain_gate = live_budget_exceeded(
             options,
             base.column_count(),
@@ -822,6 +843,11 @@ fn gnfs_divisor_timed(
             return Err(error);
         }
     }
+    let squares_count = squares.len();
+    for square in squares {
+        dependencies.push(vec![relations.len()]);
+        relations.push(square);
+    }
     if relations.len() <= rank {
         collector.record_elapsed(
             "matrix_rank",
@@ -883,7 +909,7 @@ fn gnfs_divisor_timed(
                 Some(degree),
                 total,
                 format!(
-                    "relations={} rank={} dependencies={}",
+                    "relations={} rank={} dependencies={} squares={squares_count}",
                     relations.len(),
                     rank,
                     dependencies.len()
@@ -897,7 +923,7 @@ fn gnfs_divisor_timed(
         Some(degree),
         total,
         format!(
-            "failed sqrt_failed unit_correction_failed relations={} rank={} dependencies={} units_tried={} bound={}",
+            "failed sqrt_failed unit_correction_failed relations={} rank={} dependencies={} units_tried={} bound={} squares={squares_count}",
             relations.len(),
             rank,
             dependencies.len(),
@@ -1427,8 +1453,23 @@ fn drain_partial_bank(
     }
 }
 
+const TARGET_EXCESS_TABLE: [(usize, usize, usize); 2] = [(4096, 3, 16), (usize::MAX, 2, 16)];
+
+fn target_excess_params(columns: usize) -> (usize, usize) {
+    TARGET_EXCESS_TABLE
+        .iter()
+        .find(|entry| columns <= entry.0)
+        .map(|entry| (entry.1, entry.2))
+        .unwrap_or((2, 16))
+}
+
 fn target_relations(columns: usize) -> usize {
-    columns + columns / 2 + 16
+    let (divisor, addend) = target_excess_params(columns);
+    columns + columns / divisor + addend
+}
+
+fn drain_needed(relations: usize, rank: usize, columns: usize) -> bool {
+    relations <= rank && relations < target_relations(columns)
 }
 
 fn build_rational_scores(base: &GeneralBase, max_a: i64) -> Vec<u32> {
@@ -1965,6 +2006,160 @@ fn combine_relations(
         mask,
         large_prime: None,
         double_edge: None,
+    }
+}
+
+fn enqueue_light_column(
+    queue: &mut VecDeque<usize>,
+    queued: &mut [bool],
+    weights: &[usize],
+    column: usize,
+) {
+    if (weights[column] == 1 || weights[column] == 2) && !queued[column] {
+        queued[column] = true;
+        queue.push_back(column);
+    }
+}
+
+struct FilteredRelations {
+    relations: Vec<GeneralRelation>,
+    sources: Vec<Vec<usize>>,
+    squares: Vec<GeneralRelation>,
+    square_sources: Vec<Vec<usize>>,
+}
+
+fn filter_gnfs_relations(
+    field: &NumberField,
+    input: Vec<GeneralRelation>,
+    column_count: usize,
+) -> FilteredRelations {
+    let words = input
+        .iter()
+        .map(|relation| relation.mask.len())
+        .max()
+        .unwrap_or(0)
+        .max(column_count.div_ceil(64));
+    let mut relations = input;
+    let mut alive = vec![true; relations.len()];
+    let mut sources: Vec<Vec<usize>> = (0..relations.len()).map(|index| vec![index]).collect();
+    for relation in relations.iter_mut() {
+        grow_mask(&mut relation.mask, words);
+    }
+    let mut weights = vec![0_usize; column_count];
+    let mut members: Vec<Vec<usize>> = vec![Vec::new(); column_count];
+    for (index, relation) in relations.iter().enumerate() {
+        for column in 0..column_count {
+            if relation.mask[column / 64] & (1_u64 << (column % 64)) != 0 {
+                weights[column] += 1;
+                members[column].push(index);
+            }
+        }
+    }
+    let mut queue: VecDeque<usize> = VecDeque::new();
+    let mut queued = vec![false; column_count];
+    for column in 0..column_count {
+        enqueue_light_column(&mut queue, &mut queued, &weights, column);
+    }
+    let retire_row = |row: usize,
+                      relations: &[GeneralRelation],
+                      alive: &mut [bool],
+                      weights: &mut [usize],
+                      queue: &mut VecDeque<usize>,
+                      queued: &mut [bool]| {
+        alive[row] = false;
+        for column in 0..column_count {
+            if relations[row].mask[column / 64] & (1_u64 << (column % 64)) != 0 {
+                weights[column] = weights[column].saturating_sub(1);
+                enqueue_light_column(queue, queued, weights, column);
+            }
+        }
+    };
+    let mut squares = Vec::new();
+    let mut square_sources: Vec<Vec<usize>> = Vec::new();
+    while let Some(column) = queue.pop_front() {
+        queued[column] = false;
+        if weights[column] > 2 {
+            continue;
+        }
+        let mut found = Vec::with_capacity(2);
+        for member in members[column].iter() {
+            if alive[*member] {
+                found.push(*member);
+                if found.len() > 2 {
+                    break;
+                }
+            }
+        }
+        if found.len() != weights[column] {
+            weights[column] = found.len();
+        }
+        if found.len() == 1 {
+            retire_row(
+                found[0],
+                &relations,
+                &mut alive,
+                &mut weights,
+                &mut queue,
+                &mut queued,
+            );
+        } else if found.len() == 2 {
+            let combined =
+                combine_relations(field, words, &relations[found[0]], &relations[found[1]]);
+            let mut combined_sources = sources[found[0]].clone();
+            combined_sources.extend_from_slice(&sources[found[1]]);
+            retire_row(
+                found[0],
+                &relations,
+                &mut alive,
+                &mut weights,
+                &mut queue,
+                &mut queued,
+            );
+            retire_row(
+                found[1],
+                &relations,
+                &mut alive,
+                &mut weights,
+                &mut queue,
+                &mut queued,
+            );
+            if combined.mask.iter().all(|word| *word == 0) {
+                squares.push(combined);
+                square_sources.push(combined_sources);
+                continue;
+            }
+            let fresh = relations.len();
+            for column in 0..column_count {
+                if combined.mask[column / 64] & (1_u64 << (column % 64)) != 0 {
+                    weights[column] += 1;
+                    members[column].push(fresh);
+                    enqueue_light_column(&mut queue, &mut queued, &weights, column);
+                }
+            }
+            relations.push(combined);
+            alive.push(true);
+            sources.push(combined_sources);
+        }
+    }
+    let mut kept_relations = Vec::new();
+    let mut kept_sources = Vec::new();
+    for (index, relation) in relations.into_iter().enumerate() {
+        if !alive[index] {
+            continue;
+        }
+        if relation.mask.iter().any(|word| *word != 0) {
+            kept_relations.push(relation);
+            kept_sources.push(std::mem::take(&mut sources[index]));
+        } else {
+            squares.push(relation);
+            square_sources.push(std::mem::take(&mut sources[index]));
+        }
+    }
+    FilteredRelations {
+        relations: kept_relations,
+        sources: kept_sources,
+        squares,
+        square_sources,
     }
 }
 
@@ -3745,5 +3940,373 @@ mod tests {
         assert!(detail.contains("found=false"));
         assert!(detail.contains("tried=0"));
         assert!(!detail.contains("winner_order="));
+    }
+
+    fn filter_relation(rational: i32, algebraic: &[i64], mask: Vec<u64>) -> GeneralRelation {
+        GeneralRelation {
+            rational_value: Integer::from(rational),
+            algebraic_value: cubic(algebraic),
+            mask,
+            large_prime: None,
+            double_edge: None,
+        }
+    }
+
+    fn row_rank_excess(relations: &[GeneralRelation], columns: usize) -> (usize, usize) {
+        let (rank, _) = rank_and_dependencies(relations, columns, 1024, 2, 1);
+        (rank, relations.len().wrapping_sub(rank))
+    }
+
+    #[test]
+    fn merge_product_matches_input_product() {
+        let field = pure_cubic(2);
+        let relations = vec![
+            filter_relation(2, &[1, 0, 0], vec![0b0011]),
+            filter_relation(3, &[0, 1, 0], vec![0b0011]),
+            filter_relation(5, &[0, 0, 1], vec![0b0011]),
+            filter_relation(7, &[1, 1, 0], vec![0b0110]),
+            filter_relation(11, &[1, 0, 1], vec![0b0101]),
+        ];
+        let expected_algebraic = field.multiply(&cubic(&[1, 1, 0]), &cubic(&[1, 0, 1]));
+        let filtered = filter_gnfs_relations(&field, relations, 4);
+        assert_eq!(filtered.relations.len(), 4);
+        assert_eq!(filtered.sources.len(), 4);
+        let merged_position = filtered
+            .sources
+            .iter()
+            .position(|sources| sources.len() == 2)
+            .expect("merged row");
+        assert_eq!(filtered.sources[merged_position], vec![3, 4]);
+        let merged = &filtered.relations[merged_position];
+        assert_eq!(merged.rational_value, Integer::from(77));
+        assert_eq!(merged.algebraic_value, expected_algebraic);
+        assert_eq!(merged.mask, vec![0b0011]);
+        assert!(merged.large_prime.is_none());
+        assert!(merged.double_edge.is_none());
+    }
+
+    #[test]
+    fn singleton_column_row_is_removed() {
+        let field = pure_cubic(2);
+        let relations = vec![
+            filter_relation(2, &[1, 0, 0], vec![0b0011]),
+            filter_relation(3, &[0, 1, 0], vec![0b0011]),
+            filter_relation(5, &[0, 0, 1], vec![0b0011]),
+            filter_relation(7, &[1, 1, 0], vec![0b0100]),
+        ];
+        let before = row_rank_excess(&relations, 4);
+        let filtered = filter_gnfs_relations(&field, relations, 4);
+        assert_eq!(filtered.relations.len(), 3);
+        assert!(
+            filtered
+                .relations
+                .iter()
+                .all(|relation| { relation.mask.iter().any(|word| *word != 0) })
+        );
+        let after = row_rank_excess(&filtered.relations, 4);
+        assert_eq!(before.1, after.1);
+    }
+
+    #[test]
+    fn filtered_dependencies_expand_to_original_squares() {
+        let field = pure_cubic(2);
+        let relations = vec![
+            filter_relation(2, &[1, 0, 0], vec![0b0011]),
+            filter_relation(3, &[0, 1, 0], vec![0b0110]),
+            filter_relation(5, &[0, 0, 1], vec![0b0101]),
+            filter_relation(7, &[1, 1, 0], vec![0b0011]),
+            filter_relation(11, &[1, 0, 1], vec![0b1000]),
+            filter_relation(13, &[0, 1, 1], vec![0b1000]),
+        ];
+        let original_masks: Vec<Vec<u64>> = relations
+            .iter()
+            .map(|relation| relation.mask.clone())
+            .collect();
+        let filtered = filter_gnfs_relations(&field, relations, 4);
+        assert!(!filtered.relations.is_empty());
+        let (_, dependencies) = rank_and_dependencies(&filtered.relations, 4, 1024, 2, 1);
+        assert!(!dependencies.is_empty());
+        for dependency in &dependencies {
+            let mut parity = vec![0u64; 1];
+            for row in dependency {
+                for source in &filtered.sources[*row] {
+                    for (word, mask) in parity.iter_mut().zip(original_masks[*source].iter()) {
+                        *word ^= *mask;
+                    }
+                }
+            }
+            assert!(parity.iter().all(|word| *word == 0));
+        }
+    }
+
+    #[test]
+    fn zero_mask_merge_surfaces_square_product() {
+        let field = pure_cubic(2);
+        let relations = vec![
+            filter_relation(6, &[1, 0, 0], vec![0b0001]),
+            filter_relation(10, &[0, 1, 0], vec![0b0001]),
+        ];
+        let input_rows = relations.len();
+        let original_masks: Vec<Vec<u64>> = relations
+            .iter()
+            .map(|relation| relation.mask.clone())
+            .collect();
+        let (before_rank, _) = row_rank_excess(&relations, 4);
+        let filtered = filter_gnfs_relations(&field, relations, 4);
+        assert!(filtered.relations.is_empty());
+        assert_eq!(filtered.squares.len(), 1);
+        assert_eq!(filtered.square_sources, vec![vec![0, 1]]);
+        let square = &filtered.squares[0];
+        assert_eq!(square.rational_value, Integer::from(60));
+        assert_eq!(
+            square.algebraic_value,
+            field.multiply(&cubic(&[1, 0, 0]), &cubic(&[0, 1, 0]))
+        );
+        assert!(square.mask.iter().all(|word| *word == 0));
+        let mut parity = vec![0u64; 1];
+        for source in &filtered.square_sources[0] {
+            parity[0] ^= original_masks[*source][0];
+        }
+        assert_eq!(parity, vec![0]);
+        let (kept_rank, _) = row_rank_excess(&filtered.relations, 4);
+        assert_eq!(
+            filtered.relations.len() + filtered.squares.len() - kept_rank,
+            input_rows - before_rank
+        );
+    }
+
+    #[test]
+    fn zero_mask_input_row_surfaces_square() {
+        let field = pure_cubic(2);
+        let relations = vec![
+            filter_relation(2, &[1, 0, 0], vec![0b0011]),
+            filter_relation(3, &[0, 1, 0], vec![0b0011]),
+            filter_relation(5, &[0, 0, 1], vec![0b0011]),
+            filter_relation(7, &[1, 1, 0], vec![0u64; 1]),
+        ];
+        let filtered = filter_gnfs_relations(&field, relations, 4);
+        assert_eq!(filtered.relations.len(), 3);
+        assert_eq!(filtered.squares.len(), 1);
+        assert_eq!(filtered.square_sources, vec![vec![3]]);
+        assert_eq!(filtered.squares[0].rational_value, Integer::from(7));
+    }
+
+    #[test]
+    fn filter_square_survives_drain_with_singleton_dependency() {
+        let columns = 4usize;
+        let words = columns.div_ceil(64);
+        let mut base = GeneralBase {
+            rational_primes: Vec::new(),
+            rational_indices: HashMap::new(),
+            algebraic_roots: Vec::new(),
+            algebraic_index: HashMap::new(),
+            modulus_primes: Vec::new(),
+            discriminant: Integer::from(0),
+            algebraic_bound: 0,
+            large_prime_bound: 0,
+            large_prime_roots: HashMap::new(),
+            sign_column: 3,
+            lp_columns: 0,
+        };
+        assert_eq!(base.column_count(), columns);
+        let mut bank = PartialBank::new();
+        bank.singles
+            .push(filter_relation(7, &[1, 0, 0], vec![0b0001]));
+        bank.single_sources.push((0, 0));
+        bank.single_aux.push(1);
+        bank.single_lps.push(Vec::new());
+        let mut relations = vec![
+            filter_relation(2, &[1, 0, 0], vec![0b0011]),
+            filter_relation(3, &[0, 1, 0], vec![0b0101]),
+        ];
+        let square = GeneralRelation {
+            rational_value: Integer::from(36),
+            algebraic_value: cubic(&[36, 0, 0]),
+            mask: vec![0u64; words],
+            large_prime: None,
+            double_edge: None,
+        };
+        let (mut rank, _) = rank_and_dependencies(&relations, columns, 1024, 2, 1);
+        assert_eq!((rank, relations.len()), (2, 2));
+        assert!(drain_needed(relations.len(), rank, base.column_count()));
+        drain_partial_bank(&mut base, &mut bank, &mut relations);
+        relations.retain(|relation| relation.mask.iter().any(|word| *word != 0));
+        let rerank = rank_and_dependencies(&relations, base.column_count(), 1024, 2, 1);
+        rank = rerank.0;
+        let mut dependencies = rerank.1;
+        dependencies.push(vec![relations.len()]);
+        relations.push(square);
+        assert_eq!(rank, 2);
+        assert_eq!(relations.len(), 3);
+        assert!(relations[2].mask.iter().all(|word| *word == 0));
+        assert_eq!(dependencies, vec![vec![2]]);
+        let divisor = direct_congruence_of_squares(
+            &Integer::from(15),
+            &Integer::from(0),
+            &relations,
+            &[2],
+            None,
+        )
+        .expect("singleton square dependency factors fifteen");
+        assert!(divisor > Integer::from(1) && divisor < Integer::from(15));
+        assert_eq!(&Integer::from(15) % &divisor, Integer::from(0));
+    }
+
+    #[test]
+    fn squareless_drain_path_is_order_invariant() {
+        let columns = 4usize;
+        let mut base_old = GeneralBase {
+            rational_primes: Vec::new(),
+            rational_indices: HashMap::new(),
+            algebraic_roots: Vec::new(),
+            algebraic_index: HashMap::new(),
+            modulus_primes: Vec::new(),
+            discriminant: Integer::from(0),
+            algebraic_bound: 0,
+            large_prime_bound: 0,
+            large_prime_roots: HashMap::new(),
+            sign_column: 3,
+            lp_columns: 0,
+        };
+        let mut base_new = GeneralBase {
+            rational_primes: Vec::new(),
+            rational_indices: HashMap::new(),
+            algebraic_roots: Vec::new(),
+            algebraic_index: HashMap::new(),
+            modulus_primes: Vec::new(),
+            discriminant: Integer::from(0),
+            algebraic_bound: 0,
+            large_prime_bound: 0,
+            large_prime_roots: HashMap::new(),
+            sign_column: 3,
+            lp_columns: 0,
+        };
+        let mut bank_old = PartialBank::new();
+        bank_old
+            .singles
+            .push(filter_relation(7, &[1, 0, 0], vec![0b0001]));
+        bank_old.single_sources.push((0, 0));
+        bank_old.single_aux.push(1);
+        bank_old.single_lps.push(Vec::new());
+        let mut bank_new = PartialBank::new();
+        bank_new
+            .singles
+            .push(filter_relation(7, &[1, 0, 0], vec![0b0001]));
+        bank_new.single_sources.push((0, 0));
+        bank_new.single_aux.push(1);
+        bank_new.single_lps.push(Vec::new());
+        let seed = vec![
+            filter_relation(2, &[1, 0, 0], vec![0b0011]),
+            filter_relation(3, &[0, 1, 0], vec![0b0101]),
+        ];
+        let mut relations_old = seed.clone();
+        let (mut rank_old, _) = rank_and_dependencies(&relations_old, columns, 1024, 2, 1);
+        assert!(drain_needed(
+            relations_old.len(),
+            rank_old,
+            base_old.column_count()
+        ));
+        drain_partial_bank(&mut base_old, &mut bank_old, &mut relations_old);
+        relations_old.retain(|relation| relation.mask.iter().any(|word| *word != 0));
+        let rerank_old = rank_and_dependencies(&relations_old, base_old.column_count(), 1024, 2, 1);
+        rank_old = rerank_old.0;
+        let dependencies_old = rerank_old.1;
+        let mut relations_new = seed;
+        let (mut rank_new, _) = rank_and_dependencies(&relations_new, columns, 1024, 2, 1);
+        assert!(drain_needed(
+            relations_new.len(),
+            rank_new,
+            base_new.column_count()
+        ));
+        drain_partial_bank(&mut base_new, &mut bank_new, &mut relations_new);
+        relations_new.retain(|relation| relation.mask.iter().any(|word| *word != 0));
+        let rerank_new = rank_and_dependencies(&relations_new, base_new.column_count(), 1024, 2, 1);
+        rank_new = rerank_new.0;
+        let dependencies_new = rerank_new.1;
+        assert_eq!(relations_old.len(), relations_new.len());
+        assert_eq!(rank_old, rank_new);
+        assert_eq!(dependencies_old, dependencies_new);
+        for (left, right) in relations_old.iter().zip(relations_new.iter()) {
+            assert_eq!(left.mask, right.mask);
+            assert_eq!(left.rational_value, right.rational_value);
+            assert_eq!(
+                left.algebraic_value.coefficients,
+                right.algebraic_value.coefficients
+            );
+        }
+    }
+
+    #[test]
+    fn wide_column_count_does_not_panic() {
+        let field = pure_cubic(2);
+        let relations = vec![
+            filter_relation(2, &[1, 0, 0], vec![0b0011]),
+            filter_relation(3, &[0, 1, 0], vec![0b0011]),
+            filter_relation(5, &[0, 0, 1], vec![0b0011]),
+        ];
+        let filtered = filter_gnfs_relations(&field, relations, 200);
+        assert_eq!(filtered.relations.len(), 3);
+        assert!(filtered.squares.is_empty());
+        let empty = filter_gnfs_relations(&field, Vec::new(), 200);
+        assert!(empty.relations.is_empty());
+        assert!(empty.squares.is_empty());
+        let empty_zero = filter_gnfs_relations(&field, Vec::new(), 0);
+        assert!(empty_zero.relations.is_empty());
+        assert!(empty_zero.squares.is_empty());
+    }
+
+    #[test]
+    fn retuned_target_table_matches_reviewed_values() {
+        assert_eq!(target_relations(0), 16);
+        assert_eq!(target_relations(100), 149);
+        assert_eq!(target_relations(2441), 3270);
+        assert_eq!(target_relations(3977), 5318);
+        assert_eq!(target_relations(5000), 7516);
+    }
+
+    #[test]
+    fn drain_gate_never_fires_on_corpus_kept_matrices() {
+        assert!(!drain_needed(3499, 2241, 2441));
+        assert!(!drain_needed(5837, 3822, 3977));
+        assert!(!drain_needed(3677, 2419, 2441));
+        assert!(!drain_needed(5981, 3966, 3977));
+    }
+
+    #[test]
+    fn drain_gate_fires_only_when_deficient() {
+        assert!(drain_needed(100, 100, 2441));
+        assert!(drain_needed(50, 200, 2441));
+        assert!(!drain_needed(3000, 2241, 2441));
+    }
+
+    #[test]
+    fn drain_gate_matches_rank_deficiency_everywhere() {
+        for columns in [0, 1, 100, 2441, 3977, 5000, 100000] {
+            for (relations, rank) in [(0, 0), (5, 10), (10, 10), (10, 5), (100000, 99999)] {
+                assert_eq!(drain_needed(relations, rank, columns), relations <= rank);
+            }
+        }
+    }
+
+    #[test]
+    fn fixpoint_leaves_no_light_columns() {
+        let field = pure_cubic(2);
+        let relations = vec![
+            filter_relation(2, &[1, 0, 0], vec![0b0011]),
+            filter_relation(3, &[0, 1, 0], vec![0b0110]),
+            filter_relation(5, &[0, 0, 1], vec![0b0101]),
+            filter_relation(7, &[1, 1, 0], vec![0b1010]),
+            filter_relation(11, &[1, 0, 1], vec![0b1100]),
+        ];
+        let filtered = filter_gnfs_relations(&field, relations, 4);
+        let mut weights = vec![0usize; 4];
+        for relation in &filtered.relations {
+            for column in 0..4 {
+                if relation.mask[0] & (1u64 << column) != 0 {
+                    weights[column] += 1;
+                }
+            }
+        }
+        assert!(weights.iter().all(|weight| *weight == 0 || *weight >= 3));
     }
 }

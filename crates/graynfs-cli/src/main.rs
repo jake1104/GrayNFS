@@ -1,8 +1,10 @@
-use clap::Parser;
+use clap::{CommandFactory, Parser, Subcommand};
 use graynfs_core::{
-    FactorError, FactorOptions, FactorReport, ProgressEvent, StageTiming, factor_with_timings,
-    parse_decimal,
+    CancellationToken, FactorError, FactorOptions, FactorReport, ProgressEvent, StageTiming,
+    factor_with_timings_cancelled, parse_decimal,
 };
+use std::io::BufRead;
+use std::path::PathBuf;
 use std::process::ExitCode;
 
 #[cfg(feature = "mimalloc")]
@@ -12,7 +14,7 @@ static GLOBAL: mimalloc::MiMalloc = mimalloc::MiMalloc;
 #[derive(Parser, Debug)]
 #[command(name = "graynfs", version, about = "Factor integers with GNFS")]
 struct Cli {
-    number: String,
+    number: Option<String>,
     #[arg(
         long,
         help = "Force a fixed polynomial degree instead of the automatic race"
@@ -102,6 +104,23 @@ struct Cli {
     json: bool,
     #[arg(long, help = "Stream per-event factorization progress to stderr")]
     progress: bool,
+    #[command(subcommand)]
+    command: Option<Commands>,
+}
+
+#[derive(Subcommand, Debug)]
+enum Commands {
+    Batch {
+        #[arg(long, help = "Path to a text file holding one integer per line")]
+        input: PathBuf,
+        #[arg(long, help = "Emit JSON Lines records (the default batch encoding)")]
+        jsonl: bool,
+        #[arg(
+            long,
+            help = "Record per-line failures and keep going instead of aborting"
+        )]
+        continue_on_error: bool,
+    },
 }
 
 fn options_from_cli(cli: &Cli) -> FactorOptions {
@@ -132,7 +151,185 @@ fn options_from_cli(cli: &Cli) -> FactorOptions {
 
 fn main() -> ExitCode {
     let cli = Cli::parse();
-    let number = match parse_decimal(&cli.number) {
+    match &cli.command {
+        Some(Commands::Batch {
+            input,
+            continue_on_error,
+            ..
+        }) => run_batch(&cli, input, *continue_on_error),
+        None => run_single(&cli),
+    }
+}
+
+struct BatchRecord {
+    input: String,
+    factors: Vec<String>,
+    status: String,
+    method: Option<String>,
+    elapsed_ms: u128,
+    error: Option<String>,
+}
+
+fn batch_record_value(record: &BatchRecord) -> serde_json::Value {
+    serde_json::json!({
+        "input": record.input,
+        "factors": record.factors,
+        "status": record.status,
+        "method": record.method,
+        "elapsed_ms": record.elapsed_ms,
+        "error": record.error,
+    })
+}
+
+fn factor_batch_line(
+    raw: &str,
+    options: &FactorOptions,
+    token: &CancellationToken,
+    show_progress: bool,
+) -> BatchRecord {
+    let started = std::time::Instant::now();
+    let number = match parse_decimal(raw) {
+        Ok(value) => value,
+        Err(error) => {
+            let (_, detail) = error_parts(&error);
+            return BatchRecord {
+                input: raw.to_string(),
+                factors: Vec::new(),
+                status: "error".to_string(),
+                method: None,
+                elapsed_ms: started.elapsed().as_millis(),
+                error: Some(detail),
+            };
+        }
+    };
+    let (result, _) = factor_with_timings_cancelled(&number, options, token, |event| {
+        if token.is_cancelled() {
+            return Err(FactorError::Cancelled);
+        }
+        if show_progress {
+            eprintln!("{}", format_progress(event));
+        }
+        Ok(())
+    });
+    match result {
+        Ok(report) => BatchRecord {
+            input: raw.to_string(),
+            factors: report.factors,
+            status: "ok".to_string(),
+            method: Some(report.method),
+            elapsed_ms: started.elapsed().as_millis(),
+            error: None,
+        },
+        Err(error) => {
+            let (category, detail) = error_parts(&error);
+            BatchRecord {
+                input: raw.to_string(),
+                factors: Vec::new(),
+                status: "error".to_string(),
+                method: None,
+                elapsed_ms: started.elapsed().as_millis(),
+                error: Some(format!("{category}: {detail}")),
+            }
+        }
+    }
+}
+
+fn run_batch_lines(
+    lines: &[String],
+    options: &FactorOptions,
+    token: &CancellationToken,
+    show_progress: bool,
+    continue_on_error: bool,
+    emit: &mut dyn FnMut(&BatchRecord),
+) -> bool {
+    for line in lines {
+        let trimmed = line.trim();
+        if trimmed.is_empty() {
+            continue;
+        }
+        let record = factor_batch_line(trimmed, options, token, show_progress);
+        let failed = record.status == "error";
+        let cancelled = record
+            .error
+            .as_deref()
+            .is_some_and(|text| text.starts_with("cancelled"));
+        emit(&record);
+        if cancelled || (failed && !continue_on_error) {
+            return false;
+        }
+        if token.is_cancelled() {
+            return false;
+        }
+    }
+    true
+}
+
+fn batch_exit_code(failed: bool, cancelled: bool) -> ExitCode {
+    if failed || cancelled {
+        ExitCode::FAILURE
+    } else {
+        ExitCode::SUCCESS
+    }
+}
+
+fn run_batch(cli: &Cli, input: &PathBuf, continue_on_error: bool) -> ExitCode {
+    let file = match std::fs::File::open(input) {
+        Ok(handle) => handle,
+        Err(error) => {
+            eprintln!(
+                "error: input: cannot open batch file {}: {error}",
+                input.display()
+            );
+            return ExitCode::FAILURE;
+        }
+    };
+    let options = options_from_cli(cli);
+    let show_progress = cli.progress;
+    let token = CancellationToken::new();
+    let interrupt = token.clone();
+    let _ = ctrlc::set_handler(move || {
+        interrupt.cancel();
+    });
+    let reader = std::io::BufReader::new(file);
+    let mut lines = Vec::new();
+    for line in reader.lines() {
+        match line {
+            Ok(text) => lines.push(text),
+            Err(error) => {
+                eprintln!("error: io: cannot read batch line: {error}");
+                return ExitCode::FAILURE;
+            }
+        }
+    }
+    let mut failed = false;
+    let mut emit = |record: &BatchRecord| {
+        if record.status == "error" {
+            failed = true;
+        }
+        print_json(&batch_record_value(record));
+    };
+    run_batch_lines(
+        &lines,
+        &options,
+        &token,
+        show_progress,
+        continue_on_error,
+        &mut emit,
+    );
+    batch_exit_code(failed, token.is_cancelled())
+}
+
+fn run_single(cli: &Cli) -> ExitCode {
+    let number_text = match &cli.number {
+        Some(value) => value.clone(),
+        None => Cli::command()
+            .error(
+                clap::error::ErrorKind::MissingRequiredArgument,
+                "the following required arguments were not provided:\n  <NUMBER>",
+            )
+            .exit(),
+    };
+    let number = match parse_decimal(&number_text) {
         Ok(value) => value,
         Err(error) => {
             if cli.json {
@@ -143,9 +340,17 @@ fn main() -> ExitCode {
             return ExitCode::FAILURE;
         }
     };
-    let options = options_from_cli(&cli);
+    let options = options_from_cli(cli);
     let show_progress = cli.progress;
-    let (result, timings) = factor_with_timings(&number, &options, |event| {
+    let token = CancellationToken::new();
+    let interrupt = token.clone();
+    let _ = ctrlc::set_handler(move || {
+        interrupt.cancel();
+    });
+    let (result, timings) = factor_with_timings_cancelled(&number, &options, &token, |event| {
+        if token.is_cancelled() {
+            return Err(FactorError::Cancelled);
+        }
         if show_progress {
             eprintln!("{}", format_progress(event));
         }
@@ -223,6 +428,9 @@ fn json_report_value(report: &FactorReport, timings: Option<&[StageTiming]>) -> 
         "method": report.method,
         "degree": report.degree,
         "factors": report.factors,
+        "factor_confidence": report.factor_confidence,
+        "polynomial": report.polynomial,
+        "root": report.root,
         "relations": report.relations,
         "rank": report.rank,
         "elapsed_ms": report.elapsed_ms,
@@ -281,6 +489,7 @@ mod tests {
         FactorReport {
             input: "100160063".to_string(),
             factors: vec!["10007".to_string(), "10009".to_string()],
+            factor_confidence: vec!["proven_prime".to_string(), "proven_prime".to_string()],
             method: "gnfs".to_string(),
             degree: Some(3),
             polynomial: None,
@@ -305,6 +514,12 @@ mod tests {
         assert_eq!(value["method"], "gnfs");
         assert_eq!(value["degree"], 3);
         assert_eq!(value["factors"], serde_json::json!(["10007", "10009"]));
+        assert_eq!(
+            value["factor_confidence"],
+            serde_json::json!(["proven_prime", "proven_prime"])
+        );
+        assert!(value["polynomial"].is_null());
+        assert!(value["root"].is_null());
         assert_eq!(value["relations"], 604);
         assert_eq!(value["rank"], 293);
         assert_eq!(value["elapsed_ms"], 120);
@@ -312,6 +527,44 @@ mod tests {
         let text = value.to_string();
         let parsed: serde_json::Value = serde_json::from_str(&text).unwrap();
         assert_eq!(parsed, value);
+    }
+
+    #[test]
+    fn json_report_emits_confidence_polynomial_root_additive_only() {
+        let report = sample_report();
+        let value = json_report_value(&report, None);
+        let mut keys: Vec<&str> = value
+            .as_object()
+            .expect("report object")
+            .keys()
+            .map(String::as_str)
+            .collect();
+        keys.sort_unstable();
+        assert_eq!(
+            keys,
+            vec![
+                "degree",
+                "elapsed_ms",
+                "factor_confidence",
+                "factors",
+                "input",
+                "method",
+                "polynomial",
+                "rank",
+                "relations",
+                "root"
+            ]
+        );
+        let mut with_poly = sample_report();
+        with_poly.polynomial = Some("x^2 + 1".to_string());
+        with_poly.root = Some("12345".to_string());
+        let poly_value = json_report_value(&with_poly, None);
+        assert_eq!(poly_value["polynomial"], "x^2 + 1");
+        assert_eq!(poly_value["root"], "12345");
+        assert_eq!(
+            poly_value["factor_confidence"],
+            serde_json::json!(["proven_prime", "proven_prime"])
+        );
     }
 
     #[test]
@@ -477,6 +730,116 @@ mod tests {
     }
 
     #[test]
+    fn batch_continue_golden_three_lines_one_failure() {
+        let options = FactorOptions::default();
+        let token = CancellationToken::new();
+        let lines = vec!["15".to_string(), "abc".to_string(), "21".to_string()];
+        let mut records = Vec::new();
+        let completed = run_batch_lines(&lines, &options, &token, false, true, &mut |record| {
+            records.push(batch_record_value(record));
+        });
+        assert!(completed);
+        assert_eq!(records.len(), 3);
+        assert_eq!(records[0]["input"], "15");
+        assert_eq!(records[0]["status"], "ok");
+        assert_eq!(records[0]["factors"], serde_json::json!(["3", "5"]));
+        assert!(records[0]["method"].is_string());
+        assert!(records[0]["error"].is_null());
+        assert_eq!(records[1]["input"], "abc");
+        assert_eq!(records[1]["status"], "error");
+        assert_eq!(records[1]["factors"], serde_json::json!([]));
+        assert!(records[1]["error"].is_string());
+        assert_eq!(records[2]["input"], "21");
+        assert_eq!(records[2]["status"], "ok");
+        assert_eq!(records[2]["factors"], serde_json::json!(["3", "7"]));
+        assert!(records[2]["error"].is_null());
+        for value in &records {
+            let mut keys: Vec<&str> = value
+                .as_object()
+                .expect("batch record object")
+                .keys()
+                .map(String::as_str)
+                .collect();
+            keys.sort_unstable();
+            assert_eq!(
+                keys,
+                vec![
+                    "elapsed_ms",
+                    "error",
+                    "factors",
+                    "input",
+                    "method",
+                    "status"
+                ]
+            );
+            let text = value.to_string();
+            let parsed: serde_json::Value = serde_json::from_str(&text).unwrap();
+            assert_eq!(&parsed, value);
+        }
+    }
+
+    #[test]
+    fn batch_aborts_on_first_failure_without_continue_flag() {
+        let options = FactorOptions::default();
+        let token = CancellationToken::new();
+        let lines = vec!["15".to_string(), "abc".to_string(), "21".to_string()];
+        let mut records = Vec::new();
+        let completed = run_batch_lines(&lines, &options, &token, false, false, &mut |record| {
+            records.push(batch_record_value(record));
+        });
+        assert!(!completed);
+        assert_eq!(records.len(), 2);
+        assert_eq!(records[0]["status"], "ok");
+        assert_eq!(records[0]["factors"], serde_json::json!(["3", "5"]));
+        assert_eq!(records[1]["status"], "error");
+        assert!(records[1]["error"].is_string());
+    }
+
+    #[test]
+    fn cli_batch_subcommand_parses_input_jsonl_continue_flags() {
+        let cli = Cli::try_parse_from([
+            "graynfs",
+            "batch",
+            "--input",
+            "numbers.txt",
+            "--jsonl",
+            "--continue-on-error",
+        ])
+        .expect("parse batch subcommand");
+        match cli.command.expect("batch command present") {
+            Commands::Batch {
+                input,
+                jsonl,
+                continue_on_error,
+            } => {
+                assert_eq!(input, PathBuf::from("numbers.txt"));
+                assert!(jsonl);
+                assert!(continue_on_error);
+            }
+        }
+        assert!(cli.number.is_none());
+        let bare = Cli::try_parse_from(["graynfs", "batch", "--input", "numbers.txt"])
+            .expect("parse batch without option flags");
+        match bare.command.expect("batch command present") {
+            Commands::Batch {
+                jsonl,
+                continue_on_error,
+                ..
+            } => {
+                assert!(!jsonl);
+                assert!(!continue_on_error);
+            }
+        }
+    }
+
+    #[test]
+    fn cli_single_number_still_parses_as_positional() {
+        let cli = Cli::try_parse_from(["graynfs", "100160063"]).expect("parse single number");
+        assert_eq!(cli.number.as_deref(), Some("100160063"));
+        assert!(cli.command.is_none());
+    }
+
+    #[test]
     fn cli_no_squfof_flag_is_rejected_as_unknown() {
         let result = Cli::try_parse_from(["graynfs", "100160063", "--no-squfof"]);
         assert!(result.is_err());
@@ -542,5 +905,27 @@ mod tests {
         let bare_options = options_from_cli(&bare);
         assert_eq!(bare_options.max_cpu_seconds, None);
         assert_eq!(bare_options.cpu_budget_ms(), None);
+    }
+
+    #[test]
+    fn batch_exit_code_truth_table() {
+        assert_eq!(batch_exit_code(false, false), ExitCode::SUCCESS);
+        assert_eq!(batch_exit_code(true, false), ExitCode::FAILURE);
+        assert_eq!(batch_exit_code(false, true), ExitCode::FAILURE);
+        assert_eq!(batch_exit_code(true, true), ExitCode::FAILURE);
+    }
+
+    #[test]
+    fn batch_precancelled_token_aborts_after_first_record() {
+        let options = FactorOptions::default();
+        let token = CancellationToken::new();
+        token.cancel();
+        let lines = vec!["15".to_string(), "21".to_string(), "33".to_string()];
+        let mut records = Vec::new();
+        let completed = run_batch_lines(&lines, &options, &token, false, true, &mut |record| {
+            records.push(batch_record_value(record));
+        });
+        assert!(!completed);
+        assert_eq!(records.len(), 1);
     }
 }

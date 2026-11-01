@@ -1,6 +1,6 @@
-from typing import Any, Callable
+from typing import Any, Callable, Optional
 
-ProgressCallback = Callable[[dict[str, Any]], None]
+ProgressCallback = Callable[[dict[str, Any]], Optional[bool]]
 
 class GrayNFSError(ValueError):
     category: str

@@ -32,9 +32,12 @@ M3  sieve acceptance threshold buckets plus the fallback ladder in
 M8  cheap-slice plus Fermat constants and formula chain in
     crates/graynfs-core/src/cascade.rs:
     cheap_slice_ms returns remaining / 16;
-    cheap_ecm_plan uses (B1 2000, B2 200000, 4-32 curves at 64 ms
-    per curve clamped to the curve window, full 32 curves when no
-    budget is known);
+    cheap_ecm_plan uses (B1 2000, B2 200000, 4-32 curves, full 32
+    curves when no budget is known) with the per-tier wall-time rate
+    table CHEAP_MS_PER_CURVE_BY_BITS ((max_bits 128, 8 ms), (u64 MAX,
+    16 ms)) selected by input bits; curves fill the cheap slice at
+    16 x the tier rate because the slice is remaining / 16, and the
+    slice deadline stays the wall guard on overfill;
     cap_ecm_slice treats burn below live / 32 as negligible
     (NEGLIGIBLE_BURN_DIVISOR 32) and otherwise caps at live / 2;
     fermat_cap_for uses CEILING 200000, FLOOR 20000,
@@ -118,7 +121,8 @@ M3_EXPECTED_PAIRS_CAP = 2_000_000
 
 
 M8_EXPECTED_CHEAP_DIVISOR = 16
-M8_EXPECTED_CHEAP_ECM = (2000, 200000, 4, 32, 64)
+M8_EXPECTED_CHEAP_ECM = (2000, 200000, 4, 32)
+M8_EXPECTED_CHEAP_TIER_TABLE = ((128, 8), (18446744073709551615, 16))
 M8_EXPECTED_CLAMP_SHAPE = (True, True)
 M8_EXPECTED_NEGLIGIBLE_DIVISOR = 32
 M8_EXPECTED_FERMAT = (200000, 20000, 65536.0, 85.0)
@@ -295,23 +299,40 @@ def parse_cheap_slice(text):
 
 def parse_cheap_ecm(text):
     consts = []
-    for name, kind in (
-        ("BOUND_ONE", "u64"),
-        ("BOUND_TWO", "u64"),
-        ("MIN_CURVES", "u64"),
-        ("MAX_CURVES", "u64"),
-        ("MS_PER_CURVE", "u128"),
-    ):
+    for name in ("BOUND_ONE", "BOUND_TWO", "MIN_CURVES", "MAX_CURVES"):
         match = re.search(
-            re.escape("const %s: %s = " % (name, kind)) + r"([\d_]+);",
+            r"const %s: u64 = " % name + r"([\d_]+);",
             text,
         )
         consts.append(plain_number(match.group(1)) if match else None)
+    table = None
+    table_match = re.search(
+        r"CHEAP_MS_PER_CURVE_BY_BITS:\s*\[\(u64,\s*u128\);\s*\d+\]\s*=\s*\[(.*?)\];",
+        text,
+        re.DOTALL,
+    )
+    if table_match:
+        rows = []
+        for entry in re.finditer(
+            r"\(\s*(u64::MAX|\d[\d_]*)\s*,\s*(\d[\d_]*)\s*\)",
+            table_match.group(1),
+        ):
+            cap = entry.group(1)
+            rows.append(
+                (
+                    18446744073709551615
+                    if cap == "u64::MAX"
+                    else plain_number(cap),
+                    plain_number(entry.group(2)),
+                )
+            )
+        table = tuple(rows)
     clamp_shape = (
         ".clamp(MIN_CURVES as u128, MAX_CURVES as u128)" in text,
         "None => MAX_CURVES" in text,
     )
-    return {"consts": tuple(consts), "clamp_shape": clamp_shape}
+    return {"consts": tuple(consts), "table": table,
+            "clamp_shape": clamp_shape}
 
 
 def parse_negligible_divisor(text):
@@ -447,6 +468,8 @@ def check_invariants(cascade_path, factor_path, relations_path=None,
            M8_EXPECTED_CHEAP_DIVISOR)
     cheap = parse_cheap_ecm(cascade_text)
     record("M8 cheap ecm consts", cheap["consts"], M8_EXPECTED_CHEAP_ECM)
+    record("M8 cheap tier table", cheap["table"],
+           M8_EXPECTED_CHEAP_TIER_TABLE)
     record("M8 cheap ecm clamp shape", cheap["clamp_shape"],
            M8_EXPECTED_CLAMP_SHAPE)
     record("M8 negligible burn divisor",

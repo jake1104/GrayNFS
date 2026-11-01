@@ -96,7 +96,15 @@ def test_stage_timings() -> None:
 
 
 def test_stage_timings_empty_for_trial_division() -> None:
-    assert graynfs.stage_timings(15) == []
+    rows = graynfs.stage_timings(15)
+    assert len(rows) == 1
+    row = rows[0]
+    assert set(row) == {"stage", "degree", "elapsed_ms", "detail"}
+    assert row["stage"] == "trial_division"
+    assert row["degree"] is None
+    assert isinstance(row["elapsed_ms"], int)
+    assert row["elapsed_ms"] >= 0
+    assert row["detail"] == "divisor=3 checked=2"
 
 
 def test_fermat_shortcircuit_and_opt_out() -> None:
@@ -118,7 +126,7 @@ def test_threads_explicit():
 
 
 def test_version() -> None:
-    assert graynfs.version() == "0.2.3"
+    assert graynfs.version() == "0.2.4"
 
 
 def test_factor_rejects_non_integer() -> None:

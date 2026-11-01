@@ -12,6 +12,8 @@ fn uncalibrated() -> CascadeSignals {
         trial_division_primes_checked: None,
         workers: 1,
         pilot_relations_per_sec: None,
+        gnfs_pilot_relations_per_ms: None,
+        gnfs_pilot_relations_per_sec: None,
         remaining_ms_at_collect: None,
     }
 }
@@ -26,6 +28,8 @@ fn calibrated(target_digits: u32, ms_per_curve: u128) -> CascadeSignals {
         trial_division_primes_checked: None,
         workers: 1,
         pilot_relations_per_sec: None,
+        gnfs_pilot_relations_per_ms: None,
+        gnfs_pilot_relations_per_sec: None,
         remaining_ms_at_collect: None,
     }
 }

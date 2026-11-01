@@ -24,8 +24,9 @@ pub mod square_root;
 
 pub use error::FactorError;
 pub use factor::{
-    FactorReport, ProgressEvent, StageTiming, factor, factor_with_progress, factor_with_timings,
-    parse_decimal, probable_prime, probable_prime_fast,
+    CancellationToken, FactorReport, ProgressEvent, StageTiming, classify_factor, factor,
+    factor_with_cancellation, factor_with_progress, factor_with_timings,
+    factor_with_timings_cancelled, parse_decimal, probable_prime, probable_prime_fast,
 };
 pub use integer::{
     Integer, IntegerExt, integer_abs, integer_gcd, integer_sqrt,

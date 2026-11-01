@@ -36,6 +36,8 @@ pub struct CascadeSignals {
     pub trial_division_primes_checked: Option<u64>,
     pub workers: usize,
     pub pilot_relations_per_sec: Option<f64>,
+    pub gnfs_pilot_relations_per_ms: Option<f64>,
+    pub gnfs_pilot_relations_per_sec: Option<f64>,
     pub remaining_ms_at_collect: Option<u128>,
 }
 
@@ -57,6 +59,8 @@ impl CascadeSignals {
             trial_division_primes_checked: None,
             workers,
             pilot_relations_per_sec: None,
+            gnfs_pilot_relations_per_ms: None,
+            gnfs_pilot_relations_per_sec: None,
             remaining_ms_at_collect,
         }
     }
@@ -107,6 +111,23 @@ impl CascadeSignals {
             return Some(rate);
         }
         self.pilot_relations_per_ms
+            .filter(|rate| rate.is_finite() && *rate > 0.0)
+            .map(|rate| rate * 1000.0)
+    }
+
+    pub fn report_gnfs_pilot(&mut self, relations: usize, collect_ms: u128) {
+        let rate = relations as f64 / collect_ms.max(1) as f64;
+        if rate.is_finite() && rate > 0.0 {
+            self.gnfs_pilot_relations_per_ms = Some(rate);
+            self.gnfs_pilot_relations_per_sec = Some(rate * 1000.0);
+        }
+    }
+
+    pub fn measured_gnfs_relations_per_sec(&self) -> Option<f64> {
+        if let Some(rate) = self.gnfs_pilot_relations_per_sec {
+            return Some(rate);
+        }
+        self.gnfs_pilot_relations_per_ms
             .filter(|rate| rate.is_finite() && *rate > 0.0)
             .map(|rate| rate * 1000.0)
     }
@@ -190,6 +211,46 @@ pub fn project_gnfs_cost_ms(
     } else {
         None
     }
+}
+
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub struct GnfsStageSplit {
+    pub select_ms: u128,
+    pub base_ms: u128,
+    pub collect_ms: u128,
+    pub la_ms: u128,
+    pub sqrt_ms: u128,
+}
+
+impl GnfsStageSplit {
+    pub fn total_ms(self) -> u128 {
+        self.select_ms
+            .saturating_add(self.base_ms)
+            .saturating_add(self.collect_ms)
+            .saturating_add(self.la_ms)
+            .saturating_add(self.sqrt_ms)
+    }
+
+    pub fn collect_rate_per_ms(self, relations: usize) -> Option<f64> {
+        if relations == 0 {
+            return None;
+        }
+        let rate = relations as f64 / self.collect_ms.max(1) as f64;
+        if rate.is_finite() && rate > 0.0 {
+            Some(rate)
+        } else {
+            None
+        }
+    }
+}
+
+pub fn project_gnfs_split_cost_ms(
+    relations_needed: usize,
+    relations_found: usize,
+    split: GnfsStageSplit,
+) -> Option<u128> {
+    let rate = split.collect_rate_per_ms(relations_found)?;
+    project_gnfs_cost_ms(relations_needed, rate, Some(split.select_ms))
 }
 
 pub fn projected_lower_cost(
@@ -333,15 +394,26 @@ pub fn cheap_slice_ms(remaining_ms: Option<u128>) -> Option<u128> {
     remaining_ms.map(|remaining| remaining / 16)
 }
 
-pub fn cheap_ecm_plan(remaining_ms: Option<u128>) -> (u64, u64, u64) {
+pub const CHEAP_MS_PER_CURVE_BY_BITS: [(u64, u128); 2] = [(128, 8), (u64::MAX, 16)];
+
+pub fn cheap_ms_per_curve_for_bits(bits: u64) -> u128 {
+    for (max_bits, ms_per_curve) in CHEAP_MS_PER_CURVE_BY_BITS {
+        if bits <= max_bits {
+            return ms_per_curve;
+        }
+    }
+    CHEAP_MS_PER_CURVE_BY_BITS[CHEAP_MS_PER_CURVE_BY_BITS.len() - 1].1
+}
+
+pub fn cheap_ecm_plan(remaining_ms: Option<u128>, bits: u64) -> (u64, u64, u64) {
     const BOUND_ONE: u64 = 2_000;
     const BOUND_TWO: u64 = 200_000;
     const MIN_CURVES: u64 = 4;
     const MAX_CURVES: u64 = 32;
-    const MS_PER_CURVE: u128 = 64;
+    let ms_per_curve = cheap_ms_per_curve_for_bits(bits);
     let curves = match remaining_ms {
         Some(remaining) => {
-            (remaining / MS_PER_CURVE).clamp(MIN_CURVES as u128, MAX_CURVES as u128) as u64
+            (remaining / ms_per_curve).clamp(MIN_CURVES as u128, MAX_CURVES as u128) as u64
         }
         None => MAX_CURVES,
     };
@@ -1005,9 +1077,10 @@ pub(crate) fn fermat_iter_budget(ceiling: u64, slice_ms: Option<u128>, ns_per_it
 mod cascade_tests {
     use super::fermat_iter_budget;
     use crate::cascade::{
-        CascadeSignals, allocate_slices, cheap_ecm_plan, cheap_slice_ms, ecm_plan, escalate_digits,
-        project_ecm_cost_ms, project_ecm_cost_ms_for_digits, project_gnfs_cost_ms,
-        project_siqs_cost_ms, projected_lower_cost, tranche_first_box,
+        CascadeSignals, allocate_slices, cheap_ecm_plan, cheap_ms_per_curve_for_bits,
+        cheap_slice_ms, ecm_plan, escalate_digits, project_ecm_cost_ms,
+        project_ecm_cost_ms_for_digits, project_gnfs_cost_ms, project_siqs_cost_ms,
+        projected_lower_cost, tranche_first_box,
     };
     use crate::integer::Integer;
 
@@ -1021,7 +1094,7 @@ mod cascade_tests {
         assert!(pp1.expect("pp1 slice") <= 70);
         let cheap = cheap_slice_ms(Some(1000)).expect("cheap slice");
         assert!(cheap <= 70);
-        let (bound_one, bound_two, curves) = cheap_ecm_plan(Some(1000));
+        let (bound_one, bound_two, curves) = cheap_ecm_plan(Some(1000), 267);
         assert!(bound_one <= 11_000);
         assert!(bound_two <= 1_900_000);
         assert!((4..=32).contains(&curves));
@@ -1029,15 +1102,29 @@ mod cascade_tests {
 
     #[test]
     fn cheap_tier_curves_derive_from_remaining_deadline() {
-        let (_, _, tiny) = cheap_ecm_plan(Some(100));
-        let (_, _, small) = cheap_ecm_plan(Some(1000));
-        let (_, _, ample) = cheap_ecm_plan(Some(60_000));
-        let (_, _, unbounded) = cheap_ecm_plan(None);
-        assert_eq!(tiny, 4);
-        assert!(small > tiny);
+        let (_, _, tiny_small) = cheap_ecm_plan(Some(100), 100);
+        let (_, _, tiny_large) = cheap_ecm_plan(Some(100), 267);
+        let (_, _, small) = cheap_ecm_plan(Some(1000), 267);
+        let (_, _, ample) = cheap_ecm_plan(Some(60_000), 100);
+        let (_, _, unbounded) = cheap_ecm_plan(None, 267);
+        assert_eq!(tiny_small, 12);
+        assert_eq!(tiny_large, 6);
+        assert!(small > tiny_large);
         assert!(small <= ample);
         assert_eq!(ample, 32);
         assert_eq!(unbounded, 32);
+    }
+
+    #[test]
+    fn cheap_tier_rate_splits_small_and_large_inputs() {
+        assert_eq!(cheap_ms_per_curve_for_bits(100), 8);
+        assert_eq!(cheap_ms_per_curve_for_bits(128), 8);
+        assert_eq!(cheap_ms_per_curve_for_bits(129), 16);
+        assert_eq!(cheap_ms_per_curve_for_bits(267), 16);
+        let (_, _, ramp_small) = cheap_ecm_plan(Some(256), 100);
+        let (_, _, ramp_large) = cheap_ecm_plan(Some(256), 267);
+        assert_eq!(ramp_small, 32);
+        assert_eq!(ramp_large, 16);
     }
 
     #[test]
@@ -1076,6 +1163,61 @@ mod cascade_tests {
             project_gnfs_cost_ms(u64::MAX as usize, 1.0, Some(u128::MAX)),
             Some(u128::MAX)
         );
+    }
+
+    #[test]
+    fn whole_run_rate_overstates_collection_only_cost() {
+        let needed = 400_usize;
+        let found = 100_usize;
+        let pilot_ms = 50_u128;
+        let select_ms = 30_u128;
+        let whole_rate = found as f64 / pilot_ms.max(1) as f64;
+        let whole = project_gnfs_cost_ms(needed, whole_rate, Some(select_ms))
+            .expect("whole-run projection");
+        assert_eq!(whole, 230);
+        let collect_ms = pilot_ms.saturating_sub(select_ms);
+        let truth = project_gnfs_cost_ms(
+            needed,
+            found as f64 / collect_ms.max(1) as f64,
+            Some(select_ms),
+        )
+        .expect("collection-only truth");
+        assert_eq!(truth, 110);
+        assert!(
+            whole > truth,
+            "whole-run rate must project higher than collection-only truth, got {whole} vs {truth}"
+        );
+    }
+
+    #[test]
+    fn split_projection_matches_collection_only_truth() {
+        let split = super::GnfsStageSplit {
+            select_ms: 30,
+            base_ms: 10,
+            collect_ms: 20,
+            la_ms: 0,
+            sqrt_ms: 0,
+        };
+        assert_eq!(split.total_ms(), 60);
+        assert_eq!(split.collect_rate_per_ms(100), Some(5.0));
+        assert_eq!(split.collect_rate_per_ms(0), None);
+        assert_eq!(
+            super::project_gnfs_split_cost_ms(400, 100, split),
+            Some(110)
+        );
+        assert_eq!(super::project_gnfs_split_cost_ms(0, 100, split), None);
+        assert_eq!(super::project_gnfs_split_cost_ms(400, 0, split), None);
+    }
+
+    #[test]
+    fn gnfs_pilot_rates_stay_out_of_siqs_signal() {
+        let mut signals = CascadeSignals::collect(&(Integer::from(1_u8) << 100), None);
+        signals.report_gnfs_pilot(100, 20);
+        assert_eq!(signals.measured_gnfs_relations_per_sec(), Some(5000.0));
+        assert_eq!(signals.measured_relations_per_sec(), None);
+        signals.report_pilot(300, 100);
+        assert_eq!(signals.measured_relations_per_sec(), Some(3000.0));
+        assert_eq!(signals.measured_gnfs_relations_per_sec(), Some(5000.0));
     }
 
     #[test]

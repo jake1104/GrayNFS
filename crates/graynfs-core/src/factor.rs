@@ -1,5 +1,5 @@
 use std::sync::atomic::{AtomicBool, Ordering};
-use std::sync::{Mutex, PoisonError};
+use std::sync::{Arc, Mutex, PoisonError};
 use std::time::{Duration, Instant};
 
 use crate::integer::{Integer, IntegerExt};
@@ -20,6 +20,7 @@ use crate::square_root::extract_factor;
 pub struct FactorReport {
     pub input: String,
     pub factors: Vec<String>,
+    pub factor_confidence: Vec<String>,
     pub method: String,
     pub degree: Option<usize>,
     pub polynomial: Option<String>,
@@ -44,6 +45,31 @@ pub struct StageTiming {
     pub degree: Option<usize>,
     pub elapsed_ms: u128,
     pub detail: String,
+}
+
+#[derive(Clone, Debug, Default)]
+pub struct CancellationToken {
+    flag: Arc<AtomicBool>,
+}
+
+impl CancellationToken {
+    pub fn new() -> Self {
+        Self {
+            flag: Arc::new(AtomicBool::new(false)),
+        }
+    }
+
+    pub fn cancel(&self) {
+        self.flag.store(true, Ordering::SeqCst);
+    }
+
+    pub fn is_cancelled(&self) -> bool {
+        self.flag.load(Ordering::SeqCst)
+    }
+
+    pub fn as_atomic(&self) -> &AtomicBool {
+        &self.flag
+    }
 }
 
 #[derive(Default)]
@@ -227,6 +253,19 @@ struct GnfsStats {
     rank: usize,
 }
 
+pub fn classify_factor(value: &Integer) -> &'static str {
+    if value.bits() <= 64 {
+        if crate::prime::is_prime_u64_deterministic(value.to_u64_saturating()) {
+            return "proven_prime";
+        }
+        return "composite";
+    }
+    if crate::prime::is_probable_prime(value) {
+        return "probable_prime";
+    }
+    "composite"
+}
+
 pub fn factor(n: &Integer, options: &FactorOptions) -> Result<FactorReport, FactorError> {
     factor_with_progress(n, options, |_| Ok(()))
 }
@@ -239,8 +278,21 @@ pub fn factor_with_progress<F>(
 where
     F: FnMut(&ProgressEvent) -> Result<(), FactorError>,
 {
+    let token = CancellationToken::new();
+    factor_with_cancellation(n, options, &token, progress)
+}
+
+pub fn factor_with_cancellation<F>(
+    n: &Integer,
+    options: &FactorOptions,
+    token: &CancellationToken,
+    progress: F,
+) -> Result<FactorReport, FactorError>
+where
+    F: FnMut(&ProgressEvent) -> Result<(), FactorError>,
+{
     let collector = TimingCollector::default();
-    factor_collected(n, options, progress, &collector)
+    factor_collected(n, options, token.as_atomic(), progress, &collector)
 }
 
 pub fn factor_with_timings<F>(
@@ -251,8 +303,21 @@ pub fn factor_with_timings<F>(
 where
     F: FnMut(&ProgressEvent) -> Result<(), FactorError>,
 {
+    let token = CancellationToken::new();
+    factor_with_timings_cancelled(n, options, &token, progress)
+}
+
+pub fn factor_with_timings_cancelled<F>(
+    n: &Integer,
+    options: &FactorOptions,
+    token: &CancellationToken,
+    progress: F,
+) -> (Result<FactorReport, FactorError>, Vec<StageTiming>)
+where
+    F: FnMut(&ProgressEvent) -> Result<(), FactorError>,
+{
     let collector = TimingCollector::default();
-    let result = factor_collected(n, options, progress, &collector);
+    let result = factor_collected(n, options, token.as_atomic(), progress, &collector);
     let timings = collector.snapshot();
     (result, timings)
 }
@@ -260,6 +325,7 @@ where
 fn factor_collected<F>(
     n: &Integer,
     options: &FactorOptions,
+    cancelled: &AtomicBool,
     mut progress: F,
     collector: &TimingCollector,
 ) -> Result<FactorReport, FactorError>
@@ -278,6 +344,7 @@ where
         return Ok(FactorReport {
             input: n.to_string(),
             factors: Vec::new(),
+            factor_confidence: Vec::new(),
             method: "trivial".to_string(),
             degree: None,
             polynomial: None,
@@ -288,7 +355,6 @@ where
             timings: Vec::new(),
         });
     }
-    let cancelled = AtomicBool::new(false);
     let deadline = options.effective_deadline(Instant::now());
     emit(
         &mut progress,
@@ -307,7 +373,7 @@ where
     factor_recursive(
         n,
         options,
-        &cancelled,
+        cancelled,
         deadline,
         &mut rng,
         &mut factors,
@@ -334,6 +400,10 @@ where
     Ok(FactorReport {
         input: n.to_string(),
         factors: factors.iter().map(ToString::to_string).collect(),
+        factor_confidence: factors
+            .iter()
+            .map(|value| classify_factor(value).to_string())
+            .collect(),
         method,
         degree,
         polynomial: polynomial.map(|value| value.describe()),
@@ -460,9 +530,11 @@ where
         None => "none".to_string(),
     };
     let trial_checked = if !options.skip_preprocessing {
+        let timer = Timer::new(timings, "trial_division", None);
         let (hit, checked) = trial_division(n);
         if let Some(divisor) = hit {
             outcome.record("trial_division");
+            timer.finish(format!("divisor={divisor} checked={checked}"));
             let cofactor = n / &divisor;
             return factor_recursive(
                 &divisor,
@@ -497,6 +569,7 @@ where
                 )
             });
         }
+        timer.finish(format!("checked={checked}"));
         checked
     } else {
         0
@@ -658,7 +731,8 @@ where
         let live_budget = crate::cascade::cheap_slice_ms(cheap_remaining);
         cheap_budget = live_budget;
         let cheap_slice = budget_to_deadline(live_budget);
-        let (cheap_one, cheap_two, cheap_curves) = crate::cascade::cheap_ecm_plan(cheap_remaining);
+        let (cheap_one, cheap_two, cheap_curves) =
+            crate::cascade::cheap_ecm_plan(cheap_remaining, signals.bits);
         let cheap = crate::ecm::ecm_cheap_report(
             n,
             cheap_one,
@@ -930,7 +1004,9 @@ where
     outcome.record("fallback");
     check_cpu(timings, options)?;
     emit(progress, "fallback", 3, 7, "running Pollard-Rho fallback")?;
+    let rho_timer = Timer::new(timings, "rho", None);
     let divisor = pollard_rho(n, rng, cancelled, deadline)?;
+    rho_timer.finish(format!("divisor={divisor}"));
     let cofactor = n / &divisor;
     factor_recursive(
         &divisor,
@@ -1145,13 +1221,62 @@ fn measured_select_ms(timings: Option<&TimingCollector>, degree: usize) -> Optio
         .map(|entry| entry.elapsed_ms)
 }
 
+fn stage_ms_sum(timings: Option<&TimingCollector>, stage: &str, degree: usize) -> Option<u128> {
+    let collector = timings?;
+    let mut total = 0u128;
+    let mut seen = false;
+    for entry in collector.snapshot() {
+        if entry.stage == stage && entry.degree == Some(degree) {
+            total = total.saturating_add(entry.elapsed_ms);
+            seen = true;
+        }
+    }
+    if seen { Some(total) } else { None }
+}
+
+fn gnfs_stage_split(
+    pilot_ms: u128,
+    timings: Option<&TimingCollector>,
+    degree: usize,
+) -> crate::cascade::GnfsStageSplit {
+    let select_ms = stage_ms_sum(timings, "select_polynomial", degree).unwrap_or(0);
+    let mut base_ms = 0u128;
+    for stage in ["number_field", "factor_base"] {
+        if let Some(spent) = stage_ms_sum(timings, stage, degree) {
+            base_ms = base_ms.saturating_add(spent);
+        }
+    }
+    let collect_ms = pilot_ms.saturating_sub(select_ms.saturating_add(base_ms));
+    crate::cascade::GnfsStageSplit {
+        select_ms,
+        base_ms,
+        collect_ms,
+        la_ms: stage_ms_sum(timings, "matrix_rank", degree).unwrap_or(0),
+        sqrt_ms: stage_ms_sum(timings, "square_root", degree).unwrap_or(0),
+    }
+}
+
+fn collect_only_ms(pilot_ms: u128, timings: Option<&TimingCollector>, degree: usize) -> u128 {
+    gnfs_stage_split(pilot_ms, timings, degree).collect_ms
+}
+
+fn pilot_relations_needed(
+    outcome: &Result<(Integer, GnfsStats, &'static str), FactorError>,
+) -> Option<usize> {
+    match outcome {
+        Ok((_, stats, _)) => Some(stats.rank + 1),
+        Err(FactorError::InsufficientRelations { required, .. }) => Some(*required),
+        _ => None,
+    }
+}
+
 #[allow(clippy::too_many_arguments)]
 fn note_pilot_for_escalation(
     best_rated: Option<RatedPilot>,
     first_limited: Option<usize>,
     degree: usize,
     pilot_yield: Option<usize>,
-    pilot_ms: u128,
+    collect_ms: u128,
     timed_out: bool,
     relations_needed: Option<usize>,
     remaining_ms: u128,
@@ -1159,7 +1284,7 @@ fn note_pilot_for_escalation(
 ) -> (Option<RatedPilot>, Option<usize>) {
     let mut best = best_rated;
     let mut limited = first_limited;
-    let rate = pilot_yield.map(|found| found as f64 / pilot_ms.max(1) as f64);
+    let rate = pilot_yield.map(|found| found as f64 / collect_ms.max(1) as f64);
     let projected = match (relations_needed, rate) {
         (Some(needed), Some(rate)) if degree >= 3 => {
             crate::cascade::project_gnfs_cost_ms(needed, rate, select_ms)
@@ -1328,24 +1453,26 @@ where
             Err(FactorError::InsufficientRelations { found, .. }) => Some(*found),
             _ => None,
         };
-        let relations_needed = match &outcome {
-            Err(FactorError::InsufficientRelations { required, .. }) => Some(*required),
-            _ => None,
-        };
+        let relations_needed = pilot_relations_needed(&outcome);
         let select_ms = measured_select_ms(timings, degree);
+        let collect_ms = if degree >= 3 {
+            collect_only_ms(pilot_ms, timings, degree)
+        } else {
+            pilot_ms
+        };
         if degree >= 3 {
             if let Some(required) = relations_needed {
                 floor_required = Some(floor_required.map_or(required, |floor| floor.min(required)));
             }
             if let Some(found) = pilot_yield {
-                let rate = found as f64 / pilot_ms.max(1) as f64;
+                let rate = found as f64 / collect_ms.max(1) as f64;
                 if rate > 0.0 {
                     floor_rate = Some(floor_rate.map_or(rate, |floor| floor.max(rate)));
                 }
             }
         }
         if let Some(found) = pilot_yield {
-            let rate = found as f64 / pilot_ms.max(1) as f64;
+            let rate = found as f64 / collect_ms.max(1) as f64;
             if let Some(collector) = timings {
                 collector.record_elapsed(
                     "pilot_rate",
@@ -1354,7 +1481,15 @@ where
                     format!("relations={found} rate={rate:.4}"),
                 );
             }
-            if rate > 0.0
+            if degree >= 3 {
+                if rate > 0.0
+                    && signals
+                        .measured_gnfs_relations_per_sec()
+                        .is_none_or(|best| rate * 1000.0 > best)
+                {
+                    signals.report_gnfs_pilot(found, collect_ms);
+                }
+            } else if rate > 0.0
                 && signals
                     .measured_relations_per_sec()
                     .is_none_or(|best| rate * 1000.0 > best)
@@ -1363,14 +1498,16 @@ where
             }
         }
         if let Some(collector) = timings {
-            let pilot_rate = pilot_yield.map(|found| found as f64 / pilot_ms.max(1) as f64);
+            let pilot_rate = pilot_yield.map(|found| found as f64 / collect_ms.max(1) as f64);
             let cost_ecm_ms = crate::cascade::project_ecm_cost_ms(signals);
             let cost_ecm_next_ms = crate::cascade::project_ecm_cost_ms_for_digits(
                 signals,
                 crate::cascade::escalate_digits(signals.target_digits),
             );
             let cost_siqs_ms = match (relations_needed, pilot_rate) {
-                (Some(needed), Some(rate)) => crate::cascade::project_siqs_cost_ms(needed, rate),
+                (Some(needed), Some(rate)) if degree < 3 => {
+                    crate::cascade::project_siqs_cost_ms(needed, rate)
+                }
                 _ => None,
             };
             let cost_gnfs_ms = match (relations_needed, pilot_rate) {
@@ -1431,7 +1568,7 @@ where
                     first_limited,
                     degree,
                     pilot_yield,
-                    pilot_ms,
+                    collect_ms,
                     true,
                     relations_needed,
                     bound.saturating_duration_since(Instant::now()).as_millis(),
@@ -1444,7 +1581,7 @@ where
                     first_limited,
                     degree,
                     pilot_yield,
-                    pilot_ms,
+                    collect_ms,
                     false,
                     relations_needed,
                     bound.saturating_duration_since(Instant::now()).as_millis(),
@@ -2186,6 +2323,83 @@ mod factor_tests {
     }
 
     #[test]
+    fn factor_confidence_pins_proven_probable_composite_boundaries() {
+        let proven = super::parse_decimal("101").expect("valid decimal");
+        assert_eq!(super::classify_factor(&proven), "proven_prime");
+        assert!(crate::prime::is_prime_u64_deterministic(101));
+        let mersenne127 =
+            super::parse_decimal("170141183460469231731687303715884105727").expect("valid decimal");
+        assert!(!crate::prime::is_prime_aks_proof(&mersenne127));
+        assert!(crate::prime::is_probable_prime(&mersenne127));
+        assert_eq!(super::classify_factor(&mersenne127), "probable_prime");
+        for decimal in ["15", "10403", "27", "49"] {
+            let composite = super::parse_decimal(decimal).expect("valid decimal");
+            assert!(!crate::prime::is_prime_u64_deterministic(
+                super::IntegerExt::to_u64_saturating(&composite)
+            ));
+            assert!(!crate::prime::is_probable_prime(&composite));
+            assert_eq!(super::classify_factor(&composite), "composite");
+        }
+    }
+
+    #[test]
+    fn factor_confidence_classifies_30bit_prime_in_milliseconds() {
+        let wide_prime = super::parse_decimal("1000000007").expect("valid decimal");
+        let started = std::time::Instant::now();
+        assert_eq!(super::classify_factor(&wide_prime), "proven_prime");
+        assert!(started.elapsed().as_millis() < 1000);
+    }
+
+    #[test]
+    fn factor_report_confidence_aligns_with_factors() {
+        let report = super::factor(
+            &super::parse_decimal("15").expect("valid decimal"),
+            &super::FactorOptions::default(),
+        )
+        .expect("factors");
+        assert_eq!(report.factors, vec!["3".to_string(), "5".to_string()]);
+        assert_eq!(
+            report.factor_confidence,
+            vec!["proven_prime".to_string(), "proven_prime".to_string()]
+        );
+        let prime = super::factor(
+            &super::parse_decimal("101").expect("valid decimal"),
+            &super::FactorOptions::default(),
+        )
+        .expect("prime factors");
+        assert_eq!(prime.factors, vec!["101".to_string()]);
+        assert_eq!(prime.factor_confidence, vec!["proven_prime".to_string()]);
+        let wide = super::factor(
+            &super::parse_decimal("170141183460469231731687303715884105727")
+                .expect("valid decimal"),
+            &super::FactorOptions::default(),
+        )
+        .expect("wide prime factors");
+        assert_eq!(
+            wide.factors,
+            vec!["170141183460469231731687303715884105727".to_string()]
+        );
+        assert_eq!(wide.factor_confidence, vec!["probable_prime".to_string()]);
+        let powered = super::factor(
+            &super::parse_decimal("27").expect("valid decimal"),
+            &super::FactorOptions::default(),
+        )
+        .expect("power factors");
+        assert_eq!(
+            powered.factors,
+            vec!["3".to_string(), "3".to_string(), "3".to_string()]
+        );
+        assert_eq!(
+            powered.factor_confidence,
+            vec![
+                "proven_prime".to_string(),
+                "proven_prime".to_string(),
+                "proven_prime".to_string()
+            ]
+        );
+    }
+
+    #[test]
     fn pilot_pick_prefers_measured_rate() {
         assert_eq!(better_pilot_pick(None, 2, 0.0, None, 60_000), None);
         assert_eq!(
@@ -2251,7 +2465,8 @@ mod factor_tests {
             ..super::FactorOptions::default()
         };
         let collector = super::TimingCollector::default();
-        let _ = super::factor_collected(&n, &options, |_| Ok(()), &collector);
+        let live = super::CancellationToken::new();
+        let _ = super::factor_collected(&n, &options, live.as_atomic(), |_| Ok(()), &collector);
         let rows = collector.snapshot();
         assert!(
             rows.iter().any(|entry| entry.stage == "race_pilot"
@@ -2352,7 +2567,9 @@ mod factor_tests {
             ..super::FactorOptions::default()
         };
         let collector = super::TimingCollector::default();
-        let outcome = super::factor_collected(&n, &options, |_| Ok(()), &collector);
+        let live = super::CancellationToken::new();
+        let outcome =
+            super::factor_collected(&n, &options, live.as_atomic(), |_| Ok(()), &collector);
         assert!(
             matches!(outcome, Err(crate::error::FactorError::ResourceLimit(_))),
             "tight-budget 90-digit run must end in ResourceLimit, got {outcome:?}"
@@ -2524,6 +2741,42 @@ mod factor_tests {
             Some(30),
         );
         assert_eq!(best, Some((2, 6.0, Some(50))));
+    }
+
+    #[test]
+    fn split_collect_time_excludes_recorded_select_and_base() {
+        let collector = super::TimingCollector::default();
+        collector.record_elapsed("select_polynomial", Some(3), 30, "m=7".to_string());
+        collector.record_elapsed("number_field", Some(3), 7, "field built".to_string());
+        collector.record_elapsed("factor_base", Some(3), 10, "columns=9".to_string());
+        collector.record_elapsed("select_polynomial", Some(2), 5, "m=3".to_string());
+        let split = super::gnfs_stage_split(100, Some(&collector), 3);
+        assert_eq!(split.select_ms, 30);
+        assert_eq!(split.base_ms, 17);
+        assert_eq!(split.collect_ms, 53);
+        assert_eq!(split.la_ms, 0);
+        assert_eq!(split.sqrt_ms, 0);
+        assert_eq!(split.total_ms(), 100);
+        assert_eq!(super::collect_only_ms(100, Some(&collector), 3), 53);
+        assert_eq!(super::collect_only_ms(100, None, 3), 100);
+        assert_eq!(super::collect_only_ms(40, Some(&collector), 3), 0);
+    }
+
+    #[test]
+    fn split_rate_keeps_affordable_gnfs_pick() {
+        let (best, limited) = super::note_pilot_for_escalation(
+            None,
+            None,
+            3,
+            Some(1000),
+            200,
+            false,
+            Some(10_000),
+            5000,
+            Some(800),
+        );
+        assert_eq!(best, Some((3, 5.0, Some(2800))));
+        assert_eq!(limited, None);
     }
 
     #[test]
@@ -3331,5 +3584,52 @@ mod cpu_budget_tests {
                 if detail.contains("cpu time budget") => {}
             other => panic!("zero cpu budget must trip immediately, got {other:?}"),
         }
+    }
+
+    #[test]
+    fn winning_pilot_emits_rank_plus_one_need() {
+        let won: Result<_, crate::FactorError> = Ok((
+            parse_decimal("104729").expect("valid decimal"),
+            super::GnfsStats {
+                polynomial: super::PolynomialPair {
+                    degree: 2,
+                    coefficients: vec![parse_decimal("1").expect("valid decimal")],
+                    m: parse_decimal("1").expect("valid decimal"),
+                },
+                relations: 300,
+                rank: 251,
+            },
+            "siqs",
+        ));
+        assert_eq!(super::pilot_relations_needed(&won), Some(252));
+        let (best, limited) = super::note_pilot_for_escalation(
+            None,
+            None,
+            2,
+            Some(300),
+            50,
+            false,
+            super::pilot_relations_needed(&won),
+            60_000,
+            None,
+        );
+        assert_eq!(best, Some((2, 6.0, Some(42))));
+        assert_eq!(limited, None);
+    }
+
+    #[test]
+    fn losing_pilot_need_path_stays_identical() {
+        let lost: Result<_, crate::FactorError> = Err(crate::FactorError::InsufficientRelations {
+            found: 100,
+            required: 400,
+        });
+        assert_eq!(super::pilot_relations_needed(&lost), Some(400));
+        let capped: Result<_, crate::FactorError> =
+            Err(crate::FactorError::ResourceLimit("capped".to_string()));
+        assert_eq!(super::pilot_relations_needed(&capped), None);
+        let cancelled: Result<_, crate::FactorError> = Err(crate::FactorError::Cancelled);
+        assert_eq!(super::pilot_relations_needed(&cancelled), None);
+        let nopoly: Result<_, crate::FactorError> = Err(crate::FactorError::NoPolynomial);
+        assert_eq!(super::pilot_relations_needed(&nopoly), None);
     }
 }

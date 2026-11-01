@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from typing import Any, Callable
+from typing import Any, Callable, Optional
 
 from . import _graynfs
 
@@ -17,7 +17,7 @@ __all__ = [
     "version",
 ]
 
-ProgressCallback = Callable[[dict[str, Any]], None]
+ProgressCallback = Callable[[dict[str, Any]], Optional[bool]]
 
 
 class GrayNFSError(ValueError):
@@ -138,7 +138,7 @@ def factor_with_progress(
     seed: int | None = None,
     max_cpu_seconds: int | None = None,
 ) -> list[int]:
-    """Factor n like factor, but call callback({stage, current, total, message}) at each stage boundary; the callback is required here (the raw binding accepts None and falls back to a plain factor)."""
+    """Factor n like factor, but call callback({stage, current, total, message}) at each stage boundary; the callback is required here (the raw binding accepts None and falls back to a plain factor). Return a falsy value (e.g. False) from the callback to cancel the operation (surfaced as GrayNFSError with category=cancelled); truthy values and None continue."""
     if not callable(callback):
         raise TypeError("callback must be callable")
     try:
@@ -360,7 +360,7 @@ def factor_report(
     seed: int | None = None,
     max_cpu_seconds: int | None = None,
 ) -> dict[str, Any]:
-    """Factor n once and return {factors, method, degree, relations, rank, elapsed_ms, timings}."""
+    """Factor n once and return {factors, factor_confidence, polynomial, root, method, degree, relations, rank, elapsed_ms, timings}."""
     try:
         _validate_seed(seed)
         raw = _graynfs.factor_report_decimal(
@@ -390,6 +390,9 @@ def factor_report(
         raise _to_gray_error(exc)
     return {
         "factors": [int(value) for value in raw["factors"]],
+        "factor_confidence": [str(value) for value in raw["factor_confidence"]],
+        "polynomial": None if raw["polynomial"] is None else str(raw["polynomial"]),
+        "root": None if raw["root"] is None else str(raw["root"]),
         "method": str(raw["method"]),
         "degree": None if raw["degree"] is None else int(raw["degree"]),
         "relations": int(raw["relations"]),

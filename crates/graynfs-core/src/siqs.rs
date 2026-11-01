@@ -946,6 +946,71 @@ fn sieve_roots_for(
     out
 }
 
+pub(crate) const SIQS_BUCKET_STRIP: usize = 8192;
+pub(crate) const SIQS_BUCKET_NONE: u32 = u32::MAX;
+
+pub(crate) fn bucket_mark_scores_chains(
+    roots: &[(u64, Vec<u64>, u32)],
+    half_width: i64,
+    scores: &mut [u32],
+    head: &mut [u32],
+    tail: &mut [u32],
+    link: &mut Vec<u32>,
+    chain_prime: &mut Vec<u64>,
+) -> u64 {
+    let width = scores.len();
+    let mut poly_score_max = 0_u64;
+    let mut strip_start = 0_usize;
+    while strip_start < width {
+        let strip_end = (strip_start + SIQS_BUCKET_STRIP).min(width);
+        for (prime, hit_roots, weight) in roots.iter() {
+            let step = *prime as usize;
+            for root in hit_roots.iter() {
+                let base = ((*root as i64 + half_width).rem_euclid(*prime as i64)) as usize;
+                let mut index = if base >= strip_start {
+                    base
+                } else {
+                    base + (strip_start - base).div_ceil(step) * step
+                };
+                while index < strip_end {
+                    scores[index] = scores[index].saturating_add(*weight);
+                    poly_score_max = poly_score_max.max(scores[index] as u64);
+                    let tail_node = tail[index];
+                    if tail_node == SIQS_BUCKET_NONE || chain_prime[tail_node as usize] != *prime {
+                        let node = chain_prime.len() as u32;
+                        chain_prime.push(*prime);
+                        link.push(SIQS_BUCKET_NONE);
+                        if head[index] == SIQS_BUCKET_NONE {
+                            head[index] = node;
+                        } else {
+                            link[tail_node as usize] = node;
+                        }
+                        tail[index] = node;
+                    }
+                    index += step;
+                }
+            }
+        }
+        strip_start = strip_end;
+    }
+    poly_score_max
+}
+
+pub(crate) fn bucket_chain_into(
+    offset: usize,
+    head: &[u32],
+    link: &[u32],
+    chain_prime: &[u64],
+    scratch: &mut Vec<u64>,
+) {
+    scratch.clear();
+    let mut node = head[offset];
+    while node != SIQS_BUCKET_NONE {
+        scratch.push(chain_prime[node as usize]);
+        node = link[node as usize];
+    }
+}
+
 type PolyOutput = (Vec<Relation>, Vec<(Relation, Vec<u64>)>);
 
 struct LpEdge {
@@ -1454,24 +1519,22 @@ where
     // measurable win. Revisit only if score_max approaches 65535 or the
     // evaluate share exceeds 5%.
     let mut scores = vec![0_u32; width];
-    let mut hits: Vec<Vec<u64>> = vec![Vec::new(); width];
+    let mut head = vec![SIQS_BUCKET_NONE; width];
+    let mut tail = vec![SIQS_BUCKET_NONE; width];
+    let mut link: Vec<u32> = Vec::new();
+    let mut chain_prime: Vec<u64> = Vec::new();
+    link.reserve(width);
+    chain_prime.reserve(width);
     let mark_start = Instant::now();
-    let mut poly_score_max = 0_u64;
-    for (prime, hit_roots, weight) in &roots {
-        for root in hit_roots {
-            let start = ((*root as i64 + half_width).rem_euclid(*prime as i64)) as usize;
-            let mut index = start;
-            while index < width {
-                scores[index] = scores[index].saturating_add(*weight);
-                poly_score_max = poly_score_max.max(scores[index] as u64);
-                let slot = &mut hits[index];
-                if slot.last().copied() != Some(*prime) {
-                    slot.push(*prime);
-                }
-                index += *prime as usize;
-            }
-        }
-    }
+    let poly_score_max = bucket_mark_scores_chains(
+        &roots,
+        half_width,
+        &mut scores,
+        &mut head,
+        &mut tail,
+        &mut link,
+        &mut chain_prime,
+    );
     stats.score_max = stats.score_max.max(poly_score_max);
     stats.sieve_mark_nanos += mark_start.elapsed().as_nanos() as u64;
     let ends = [
@@ -1502,6 +1565,7 @@ where
     // X1b: one mask buffer per polynomial, cleared per candidate; only the
     // rare accepted relations pay for a clone.
     let mut scratch_mask = vec![0_u64; words];
+    let mut hit_scratch: Vec<u64> = Vec::new();
     for (pass, base_threshold) in ladder.iter().enumerate() {
         let threshold = if pass == 2 {
             if !rescue_ready {
@@ -1531,6 +1595,7 @@ where
             stats.pass_evaluated[pass_slot] += 1;
             let signed = &poly.coeff_a * &value;
             scratch_mask.fill(0);
+            bucket_chain_into(offset, &head, &link, &chain_prime, &mut hit_scratch);
             match classify_siqs_counted(
                 &signed,
                 base,
@@ -1538,7 +1603,7 @@ where
                 barrett,
                 &mut scratch_mask,
                 lp_bound,
-                &hits[offset],
+                &hit_scratch,
                 &poly.prime_factors,
                 splitters,
                 &mut stats,
@@ -2031,7 +2096,9 @@ where
 {
     let mut working = options.clone();
     let factor_cap = resolve_siqs_table(n, &mut working);
+    let multiplier_timer = Timer::new(timings, "siqs_multiplier", Some(2));
     let multiplier = choose_siqs_multiplier(n, &sieve_primes(working.rational_base_bound));
+    multiplier_timer.finish(format!("k={multiplier}"));
     let scaled = n * Integer::from(multiplier);
     let sieved: &Integer = if multiplier == 1 { n } else { &scaled };
     let memory_budget = siqs_memory_budget_bytes(options);
@@ -3726,6 +3793,127 @@ mod siqs_tests {
         for raw in [1_u64, 5, 9, 100_160_064] {
             let n = Integer::from(raw);
             assert_eq!(choose_siqs_multiplier(&n, &[]), 1, "n={raw}");
+        }
+    }
+
+    #[test]
+    fn bucket_mark_matches_legacy_mark_on_recorded_poly() {
+        let n = Integer::from(11_783_510_925_019_u64);
+        let half_width = 700_i64;
+        let width = (half_width as usize) * 2 + 1;
+        let interval_bits = (64 - (half_width as u64).leading_zeros()).max(1);
+        let target_a = Integer::from(1) << target_a_bits(n.bits(), interval_bits);
+        let base = FactorBase::for_siqs(&n, 2000, 2000);
+        let gamma_primes: Vec<u64> = base
+            .rational_primes
+            .iter()
+            .chain(base.algebraic_modulus_primes.iter())
+            .copied()
+            .collect();
+        let gammas = SiqsGammaTable::build(&n, &gamma_primes);
+        let poly = generate_polynomial(&n, 2000, &target_a, 0).expect("poly");
+        let roots = sieve_roots_for(&base, &poly, &gammas);
+        assert_eq!(SIQS_BUCKET_STRIP, 8192);
+        assert_eq!(SIQS_BUCKET_STRIP * 4, 32768);
+        let mut legacy_scores = vec![0_u32; width];
+        let mut legacy_hits: Vec<Vec<u64>> = vec![Vec::new(); width];
+        for (prime, hit_roots, weight) in &roots {
+            for root in hit_roots {
+                let start = ((*root as i64 + half_width).rem_euclid(*prime as i64)) as usize;
+                let mut index = start;
+                while index < width {
+                    legacy_scores[index] = legacy_scores[index].saturating_add(*weight);
+                    let slot = &mut legacy_hits[index];
+                    if slot.last().copied() != Some(*prime) {
+                        slot.push(*prime);
+                    }
+                    index += *prime as usize;
+                }
+            }
+        }
+        let mut legacy_max = 0_u64;
+        for value in legacy_scores.iter() {
+            legacy_max = legacy_max.max(*value as u64);
+        }
+        let mut scores = vec![0_u32; width];
+        let mut head = vec![SIQS_BUCKET_NONE; width];
+        let mut tail = vec![SIQS_BUCKET_NONE; width];
+        let mut link: Vec<u32> = Vec::new();
+        let mut chain_prime: Vec<u64> = Vec::new();
+        let score_max = bucket_mark_scores_chains(
+            &roots,
+            half_width,
+            &mut scores,
+            &mut head,
+            &mut tail,
+            &mut link,
+            &mut chain_prime,
+        );
+        assert_eq!(scores, legacy_scores);
+        assert_eq!(score_max, legacy_max);
+        let mut scratch: Vec<u64> = Vec::new();
+        let mut total_hits = 0_usize;
+        for (offset, legacy) in legacy_hits.iter().enumerate() {
+            bucket_chain_into(offset, &head, &link, &chain_prime, &mut scratch);
+            assert_eq!(scratch.as_slice(), legacy.as_slice(), "offset={offset}");
+            total_hits += scratch.len();
+        }
+        assert!(total_hits > 1000);
+        assert_eq!(link.len(), chain_prime.len());
+        assert_eq!(total_hits, chain_prime.len());
+    }
+
+    #[test]
+    fn bucket_mark_matches_legacy_on_strip_edge_widths() {
+        let roots: Vec<(u64, Vec<u64>, u32)> = vec![
+            (3, vec![0, 1], 2),
+            (5, vec![4], 3),
+            (8191, vec![7000], 13),
+            (2, vec![1], 1),
+            (11, vec![], 4),
+        ];
+        for half_width in [0_i64, 1, 700, 4096, 4095, 8192] {
+            let width = (half_width as usize) * 2 + 1;
+            let mut legacy_scores = vec![0_u32; width];
+            let mut legacy_hits: Vec<Vec<u64>> = vec![Vec::new(); width];
+            for (prime, hit_roots, weight) in &roots {
+                for root in hit_roots {
+                    let start = ((*root as i64 + half_width).rem_euclid(*prime as i64)) as usize;
+                    let mut index = start;
+                    while index < width {
+                        legacy_scores[index] = legacy_scores[index].saturating_add(*weight);
+                        let slot = &mut legacy_hits[index];
+                        if slot.last().copied() != Some(*prime) {
+                            slot.push(*prime);
+                        }
+                        index += *prime as usize;
+                    }
+                }
+            }
+            let mut scores = vec![0_u32; width];
+            let mut head = vec![SIQS_BUCKET_NONE; width];
+            let mut tail = vec![SIQS_BUCKET_NONE; width];
+            let mut link: Vec<u32> = Vec::new();
+            let mut chain_prime: Vec<u64> = Vec::new();
+            bucket_mark_scores_chains(
+                &roots,
+                half_width,
+                &mut scores,
+                &mut head,
+                &mut tail,
+                &mut link,
+                &mut chain_prime,
+            );
+            assert_eq!(scores, legacy_scores, "half_width={half_width}");
+            let mut scratch: Vec<u64> = Vec::new();
+            for (offset, legacy) in legacy_hits.iter().enumerate() {
+                bucket_chain_into(offset, &head, &link, &chain_prime, &mut scratch);
+                assert_eq!(
+                    scratch.as_slice(),
+                    legacy.as_slice(),
+                    "half_width={half_width} offset={offset}"
+                );
+            }
         }
     }
 

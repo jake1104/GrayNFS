@@ -1,4 +1,4 @@
-from typing import Any, Callable
+from typing import Any, Callable, Optional
 
 def factor_decimal(
     n: str,
@@ -25,7 +25,7 @@ def factor_decimal(
 ) -> list[str]: ...
 def factor_with_progress_decimal(
     n: str,
-    callback: Callable[[dict[str, Any]], None] | None = ...,
+    callback: Callable[[dict[str, Any]], Optional[bool]] | None = ...,
     degree: int | None = ...,
     rational_base_bound: int = ...,
     algebraic_base_bound: int = ...,

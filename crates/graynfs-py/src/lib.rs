@@ -215,8 +215,18 @@ fn factor_with_progress_decimal(
                             .map_err(|error| FactorError::Factorization(error.to_string()))?;
                         callback
                             .call1(py, (event_dict,))
-                            .map_err(|error| FactorError::Factorization(error.to_string()))?;
-                        Ok(())
+                            .map_err(|error| FactorError::Factorization(error.to_string()))
+                            .and_then(|outcome| {
+                                if outcome.is_none(py) {
+                                    Ok(())
+                                } else if outcome.is_truthy(py).map_err(|error| {
+                                    FactorError::Factorization(error.to_string())
+                                })? {
+                                    Ok(())
+                                } else {
+                                    Err(FactorError::Cancelled)
+                                }
+                            })
                     })
                 })
             })
@@ -401,6 +411,9 @@ fn factor_report_decimal(
     let report = result.map_err(to_py_error)?;
     let dict = PyDict::new(py);
     dict.set_item("factors", report.factors)?;
+    dict.set_item("factor_confidence", report.factor_confidence)?;
+    dict.set_item("polynomial", report.polynomial)?;
+    dict.set_item("root", report.root)?;
     dict.set_item("method", report.method)?;
     dict.set_item("degree", report.degree)?;
     dict.set_item("relations", report.relations)?;

@@ -8,7 +8,7 @@ members = [
 resolver = "2"
 
 [workspace.package]
-version = "0.2.3"
+version = "0.2.4"
 edition = "2024"
 rust-version = "1.85"
 license = "MIT"
@@ -24,6 +24,7 @@ rand_chacha = "0.9"
 serde = { version = "1.0", features = ["derive"] }
 serde_json = "1.0"
 clap = { version = "4.5", features = ["derive"] }
+ctrlc = "3.4"
 mimalloc = "0.1"
 pyo3 = { version = "0.27", features = ["extension-module", "abi3-py38"] }
 
