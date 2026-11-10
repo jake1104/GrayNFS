@@ -1,6 +1,7 @@
 use num_traits::{Euclid, ToPrimitive, Zero};
 use std::sync::atomic::AtomicBool;
-use std::time::Instant;
+
+use crate::time::Instant;
 
 use crate::hensel::budget_expired;
 use crate::integer::{Integer, integer_abs};

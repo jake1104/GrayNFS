@@ -1,7 +1,8 @@
 use crate::integer::{Integer, integer_gcd};
 use crate::montgomery::Montgomery;
 use num_traits::Euclid;
-use std::time::Instant;
+
+use crate::time::Instant;
 
 pub(crate) const STAGE_ONE_BOUND: u64 = 100_000;
 

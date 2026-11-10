@@ -93,13 +93,13 @@ pub fn sieve_primes(limit: usize) -> Vec<u64> {
 
 pub fn for_each_prime(
     limit: u64,
-    deadline: Option<std::time::Instant>,
+    deadline: Option<crate::time::Instant>,
     mut visit: impl FnMut(u64) -> bool,
 ) -> bool {
     if limit < 2 {
         return true;
     }
-    if deadline.is_some_and(|reached| std::time::Instant::now() >= reached) {
+    if deadline.is_some_and(|reached| crate::time::Instant::now() >= reached) {
         return false;
     }
     let root = (limit as f64).sqrt() as usize + 1;
@@ -107,7 +107,7 @@ pub fn for_each_prime(
     const SEGMENT: u64 = 1_000_000;
     let mut low = 2_u64;
     while low <= limit {
-        if deadline.is_some_and(|reached| std::time::Instant::now() >= reached) {
+        if deadline.is_some_and(|reached| crate::time::Instant::now() >= reached) {
             return false;
         }
         let high = (low + SEGMENT - 1).min(limit);

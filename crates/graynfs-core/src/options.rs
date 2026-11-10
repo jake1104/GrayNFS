@@ -1,4 +1,6 @@
-use std::time::{Duration, Instant};
+use std::time::Duration;
+
+use crate::time::Instant;
 
 pub const DEFAULT_MEMORY_BUDGET_BYTES: u64 = 1 << 30;
 pub const MEMORY_BYTES_PER_COLUMN: u64 = 64;
@@ -169,9 +171,7 @@ impl FactorOptions {
     }
 
     pub fn effective_workers(&self) -> usize {
-        let available = std::thread::available_parallelism()
-            .map(|value| value.get())
-            .unwrap_or(1);
+        let available = crate::par::available_workers();
         self.threads.unwrap_or(available).max(1)
     }
 

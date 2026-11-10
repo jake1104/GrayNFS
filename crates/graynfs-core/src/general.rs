@@ -1,7 +1,8 @@
 use std::collections::{HashMap, HashSet, VecDeque};
 use std::sync::Mutex;
 use std::sync::atomic::{AtomicBool, Ordering};
-use std::time::Instant;
+
+use crate::time::Instant;
 
 use num_traits::{Euclid, One, ToPrimitive, Zero};
 
@@ -349,9 +350,7 @@ fn dependency_workers(dep_count: usize, options: &FactorOptions) -> usize {
 }
 
 fn options_thread_count(options: &FactorOptions) -> usize {
-    let available = std::thread::available_parallelism()
-        .map(|value| value.get())
-        .unwrap_or(1);
+    let available = crate::par::available_workers();
     options.threads.unwrap_or(available).max(1)
 }
 
@@ -483,47 +482,56 @@ fn scan_dependencies(
     let stop = &stop;
     let attempted = &attempted;
     let order = &order;
+    let run_slice = |slice: &[usize]| {
+        for index in slice {
+            if stop.load(Ordering::Relaxed) {
+                break;
+            }
+            if deadline.is_some_and(|limit| Instant::now() >= limit) {
+                break;
+            }
+            let true_index = order[*index];
+            let dependency = &dependencies[true_index];
+            let started = Instant::now();
+            let attempt = extract_factor(
+                n,
+                field,
+                evaluation_point,
+                relations,
+                dependency,
+                units,
+                base,
+                deadline,
+                Some(stop),
+                units_enabled,
+            );
+            let elapsed_ms = started.elapsed().as_millis();
+            if let Ok(mut entries) = attempted.lock() {
+                entries.push((true_index, elapsed_ms as usize));
+            }
+            if let Some(divisor) = attempt
+                && let Ok(mut slot) = found.lock()
+                && slot.is_none()
+            {
+                *slot = Some((true_index, divisor));
+                stop.store(true, Ordering::Relaxed);
+            }
+        }
+    };
+    #[cfg(not(target_arch = "wasm32"))]
     std::thread::scope(|scope| {
         for slice in &queue {
             let slice: &[usize] = slice;
-            scope.spawn(move || {
-                for index in slice {
-                    if stop.load(Ordering::Relaxed) {
-                        break;
-                    }
-                    if deadline.is_some_and(|limit| Instant::now() >= limit) {
-                        break;
-                    }
-                    let true_index = order[*index];
-                    let dependency = &dependencies[true_index];
-                    let started = Instant::now();
-                    let attempt = extract_factor(
-                        n,
-                        field,
-                        evaluation_point,
-                        relations,
-                        dependency,
-                        units,
-                        base,
-                        deadline,
-                        Some(stop),
-                        units_enabled,
-                    );
-                    let elapsed_ms = started.elapsed().as_millis();
-                    if let Ok(mut entries) = attempted.lock() {
-                        entries.push((true_index, elapsed_ms as usize));
-                    }
-                    if let Some(divisor) = attempt
-                        && let Ok(mut slot) = found.lock()
-                        && slot.is_none()
-                    {
-                        *slot = Some((true_index, divisor));
-                        stop.store(true, Ordering::Relaxed);
-                    }
-                }
-            });
+            scope.spawn(move || run_slice(slice));
         }
     });
+    #[cfg(target_arch = "wasm32")]
+    {
+        for slice in &queue {
+            let slice: &[usize] = slice;
+            run_slice(slice);
+        }
+    }
     let mut entries = match attempted.lock() {
         Ok(value) => value.clone(),
         Err(_) => Vec::new(),
@@ -1907,33 +1915,40 @@ fn scan_pass(
         }
         let consumed_shared: &HashSet<(i64, i64)> = consumed;
         let params = &params;
+        let scan_range = |lower: i64, upper: i64| -> Result<Vec<RawHit>, FactorError> {
+            let mut hits: Vec<RawHit> = Vec::new();
+            let mut scores_scratch: Vec<u32> = Vec::new();
+            let mut b = lower;
+            while b <= upper {
+                check_limits(cancelled, deadline)?;
+                hits.extend(scan_single_b(
+                    b,
+                    params,
+                    consumed_shared,
+                    cancelled,
+                    deadline,
+                    &mut scores_scratch,
+                )?);
+                b += 1;
+            }
+            Ok(hits)
+        };
+        #[cfg(not(target_arch = "wasm32"))]
         let batches = std::thread::scope(|scope| {
             let mut handles = Vec::new();
             for (lower, upper) in ranges {
-                handles.push(scope.spawn(move || -> Result<Vec<RawHit>, FactorError> {
-                    let mut hits: Vec<RawHit> = Vec::new();
-                    let mut scores_scratch: Vec<u32> = Vec::new();
-                    let mut b = lower;
-                    while b <= upper {
-                        check_limits(cancelled, deadline)?;
-                        hits.extend(scan_single_b(
-                            b,
-                            params,
-                            consumed_shared,
-                            cancelled,
-                            deadline,
-                            &mut scores_scratch,
-                        )?);
-                        b += 1;
-                    }
-                    Ok(hits)
-                }));
+                handles.push(scope.spawn(move || scan_range(lower, upper)));
             }
             handles
                 .into_iter()
                 .map(|handle| handle.join().unwrap_or(Err(FactorError::Cancelled)))
                 .collect::<Vec<Result<Vec<RawHit>, FactorError>>>()
         });
+        #[cfg(target_arch = "wasm32")]
+        let batches: Vec<Result<Vec<RawHit>, FactorError>> = ranges
+            .into_iter()
+            .map(|(lower, upper)| scan_range(lower, upper))
+            .collect();
         let mut finished = false;
         let mut since_check = 0_usize;
         for batch in batches {

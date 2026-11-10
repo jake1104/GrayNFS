@@ -1,6 +1,7 @@
 use std::collections::HashMap;
 use std::sync::atomic::{AtomicBool, Ordering};
-use std::time::Instant;
+
+use crate::time::Instant;
 
 use num_traits::{One, Signed, ToPrimitive, Zero};
 
@@ -70,9 +71,7 @@ struct PassContext<'a> {
 }
 
 fn pass_workers(rows: i64, options: &FactorOptions) -> usize {
-    let available = std::thread::available_parallelism()
-        .map(|value| value.get())
-        .unwrap_or(1);
+    let available = crate::par::available_workers();
     let requested = usize::try_from(rows.max(1)).unwrap_or(1);
     let allowed = options.threads.unwrap_or(available).max(1);
     allowed.min(requested).max(1)
@@ -256,7 +255,6 @@ where
         })
         .filter(|&(start, end)| start < end)
         .collect();
-    let (sender, receiver) = std::sync::mpsc::channel();
     let budget_stop = AtomicBool::new(false);
     let worker_context = PassContext {
         budget_stop: Some(&budget_stop),
@@ -266,24 +264,83 @@ where
     let mut partials: Vec<PartialHit> = Vec::new();
     let mut failure: Option<FactorError> = None;
     let mut reported = 0_usize;
-    std::thread::scope(|scope| {
-        let handles: Vec<_> = ranges
-            .iter()
-            .map(|&(start, stop)| {
-                let sender = sender.clone();
-                scope.spawn(move || {
-                    let outcome =
-                        collect_b_range(start, stop, max_a, width, threshold, &worker_context);
-                    let found = outcome.as_ref().map(RangeOutput::len).unwrap_or(0);
-                    let _ = sender.send(found);
-                    outcome
+    #[cfg(not(target_arch = "wasm32"))]
+    {
+        let (sender, receiver) = std::sync::mpsc::channel();
+        std::thread::scope(|scope| {
+            let handles: Vec<_> = ranges
+                .iter()
+                .map(|&(start, stop)| {
+                    let sender = sender.clone();
+                    scope.spawn(move || {
+                        let outcome =
+                            collect_b_range(start, stop, max_a, width, threshold, &worker_context);
+                        let found = outcome.as_ref().map(RangeOutput::len).unwrap_or(0);
+                        let _ = sender.send(found);
+                        outcome
+                    })
                 })
-            })
-            .collect();
-        drop(sender);
+                .collect();
+            drop(sender);
+            let mut cpu_last = Instant::now();
+            while let Ok(found) = receiver.recv() {
+                reported += found;
+                if let Some(collector) = context.collector {
+                    collector.add_cpu_ms(cpu_last.elapsed().as_millis(), workers);
+                    cpu_last = Instant::now();
+                    if let Err(error) = collector.check_cpu_budget(context.options) {
+                        failure.get_or_insert(error);
+                        budget_stop.store(true, Ordering::Relaxed);
+                        break;
+                    }
+                }
+                let live_bytes = estimate_live_bytes(context.base.column_count(), reported, 0, 0);
+                if live_bytes > context.options.memory_budget_bytes() {
+                    failure.get_or_insert(FactorError::ResourceLimit(format!(
+                        "relation collection exceeded the memory budget of {} MiB (live estimate {} MiB)",
+                        context.options.memory_budget_bytes().div_ceil(1024 * 1024),
+                        live_bytes.div_ceil(1024 * 1024)
+                    )));
+                    budget_stop.store(true, Ordering::Relaxed);
+                    break;
+                }
+                if failure.is_none()
+                    && let Err(error) = report(progress, reported, target)
+                {
+                    failure.get_or_insert(error);
+                    budget_stop.store(true, Ordering::Relaxed);
+                }
+            }
+            for handle in handles {
+                match handle.join() {
+                    Ok(Ok(output)) => {
+                        if failure.is_none() {
+                            smooth.extend(output.smooth);
+                            partials.extend(output.partials);
+                        }
+                    }
+                    Ok(Err(error)) => {
+                        failure.get_or_insert(error);
+                    }
+                    Err(_) => {
+                        failure.get_or_insert(FactorError::Cancelled);
+                    }
+                };
+            }
+        });
+    }
+    #[cfg(target_arch = "wasm32")]
+    {
         let mut cpu_last = Instant::now();
-        while let Ok(found) = receiver.recv() {
+        let mut outcomes: Vec<Result<RangeOutput, FactorError>> = Vec::with_capacity(ranges.len());
+        for &(start, stop) in &ranges {
+            if budget_stop.load(Ordering::Relaxed) {
+                break;
+            }
+            let outcome = collect_b_range(start, stop, max_a, width, threshold, &worker_context);
+            let found = outcome.as_ref().map(RangeOutput::len).unwrap_or(0);
             reported += found;
+            outcomes.push(outcome);
             if let Some(collector) = context.collector {
                 collector.add_cpu_ms(cpu_last.elapsed().as_millis(), workers);
                 cpu_last = Instant::now();
@@ -310,23 +367,20 @@ where
                 budget_stop.store(true, Ordering::Relaxed);
             }
         }
-        for handle in handles {
-            match handle.join() {
-                Ok(Ok(output)) => {
+        for outcome in outcomes {
+            match outcome {
+                Ok(output) => {
                     if failure.is_none() {
                         smooth.extend(output.smooth);
                         partials.extend(output.partials);
                     }
                 }
-                Ok(Err(error)) => {
+                Err(error) => {
                     failure.get_or_insert(error);
                 }
-                Err(_) => {
-                    failure.get_or_insert(FactorError::Cancelled);
-                }
-            };
+            }
         }
-    });
+    }
     if let Some(error) = failure {
         return Err(error);
     }

@@ -1,5 +1,6 @@
 use crate::integer::Integer;
-use std::time::{Duration, Instant};
+use crate::time::Instant;
+use std::time::Duration;
 
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 pub enum CascadeStage {
@@ -45,9 +46,7 @@ impl CascadeSignals {
     pub fn collect(n: &Integer, deadline: Option<Instant>) -> Self {
         let bits = n.bits();
         let digits = (bits * 301 / 1000).min(u64::from(u32::MAX)).max(1) as u32;
-        let workers = std::thread::available_parallelism()
-            .map(|value| value.get())
-            .unwrap_or(1);
+        let workers = crate::par::available_workers();
         let remaining_ms_at_collect =
             deadline.map(|limit| limit.saturating_duration_since(Instant::now()).as_millis());
         Self {
@@ -843,6 +842,7 @@ fn run_single_slice(
     let ecm_job_deadline = ecm_deadline;
     let ecm_job_box = ecm_box_opt;
     let ecm_job_live = live_remaining;
+    #[cfg(not(target_arch = "wasm32"))]
     let (ecm_report, ecm_t1, ecm_cap, ecm_box_ms, siqs_hit, siqs_bank_out) =
         std::thread::scope(|scope| {
             let ecm_handle = scope.spawn(move || {
@@ -899,6 +899,40 @@ fn run_single_slice(
                 siqs_bank_out,
             )
         });
+    #[cfg(target_arch = "wasm32")]
+    let (ecm_report, ecm_t1, ecm_cap, ecm_box_ms, siqs_hit, siqs_bank_out) = {
+        let (ecm_report, ecm_t1, ecm_cap, ecm_box_ms) = ecm_tranche_with_resume(
+            n,
+            ecm_job_deadline,
+            ecm_job_box,
+            ecm_job_live,
+            ecm_workers,
+            ecm_resume,
+            ecm_digits,
+        );
+        let (siqs_hit, siqs_bank_out) = if !run_siqs {
+            (None, siqs_bank)
+        } else {
+            let mut nop = |_: &crate::factor::ProgressEvent| Ok(());
+            crate::siqs::siqs_pilot_with_bank(
+                n,
+                &siqs_options,
+                cancelled,
+                siqs_deadline,
+                &mut nop,
+                timings,
+                siqs_bank,
+            )
+        };
+        (
+            ecm_report,
+            ecm_t1,
+            ecm_cap,
+            ecm_box_ms,
+            siqs_hit,
+            siqs_bank_out,
+        )
+    };
     finish_joint_arms(
         n,
         signals,

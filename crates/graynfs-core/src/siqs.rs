@@ -1,6 +1,7 @@
 use std::f64::consts::LN_2;
 use std::sync::atomic::{AtomicBool, Ordering};
-use std::time::Instant;
+
+use crate::time::Instant;
 
 use num_traits::ToPrimitive;
 
@@ -1100,9 +1101,7 @@ impl LpGraph {
 }
 
 fn siqs_worker_count(options: &FactorOptions) -> usize {
-    let available = std::thread::available_parallelism()
-        .map(|value| value.get())
-        .unwrap_or(1);
+    let available = crate::par::available_workers();
     options.threads.unwrap_or(available).max(1)
 }
 
@@ -1901,56 +1900,58 @@ where
         let toggles_ref: &SiqsToggleIndex = &toggles;
         let barrett_ref: &SiqsBarrettTable = &barrett;
         let splitters_ref: &[u64] = &splitters;
+        let run_poly = |index: usize| {
+            let gen_start = Instant::now();
+            let poly = match generate_polynomial_from(
+                sieved,
+                suitable_worker,
+                target_a_ref,
+                index * 3,
+                factor_cap,
+            ) {
+                Some(poly) => poly,
+                None => {
+                    let mut empty = SiqsPolyCounters::default();
+                    empty.generate_nanos += gen_start.elapsed().as_nanos() as u64;
+                    return (
+                        index,
+                        false,
+                        Ok((
+                            (Vec::<Relation>::new(), Vec::<(Relation, Vec<u64>)>::new()),
+                            empty,
+                        )),
+                    );
+                }
+            };
+            let gen_nanos = gen_start.elapsed().as_nanos() as u64;
+            let mut nop = |_: &ProgressEvent| Ok(());
+            let out = collect_one_poly(
+                sieved,
+                &poly,
+                index as u64,
+                base_ref,
+                gammas_ref,
+                toggles_ref,
+                barrett_ref,
+                half_width,
+                lp_bound,
+                splitters_ref,
+                cancelled,
+                deadline,
+                &mut nop,
+                columns as u64,
+            )
+            .map(|(output, mut poly_stats)| {
+                poly_stats.generate_nanos += gen_nanos;
+                (output, poly_stats)
+            });
+            (index, true, out)
+        };
+        #[cfg(not(target_arch = "wasm32"))]
         std::thread::scope(|scope| {
             let mut handles = Vec::with_capacity(batch.len());
             for &index in &batch {
-                handles.push(scope.spawn(move || {
-                    let gen_start = Instant::now();
-                    let poly = match generate_polynomial_from(
-                        sieved,
-                        suitable_worker,
-                        target_a_ref,
-                        index * 3,
-                        factor_cap,
-                    ) {
-                        Some(poly) => poly,
-                        None => {
-                            let mut empty = SiqsPolyCounters::default();
-                            empty.generate_nanos += gen_start.elapsed().as_nanos() as u64;
-                            return (
-                                index,
-                                false,
-                                Ok((
-                                    (Vec::<Relation>::new(), Vec::<(Relation, Vec<u64>)>::new()),
-                                    empty,
-                                )),
-                            );
-                        }
-                    };
-                    let gen_nanos = gen_start.elapsed().as_nanos() as u64;
-                    let mut nop = |_: &ProgressEvent| Ok(());
-                    let out = collect_one_poly(
-                        sieved,
-                        &poly,
-                        index as u64,
-                        base_ref,
-                        gammas_ref,
-                        toggles_ref,
-                        barrett_ref,
-                        half_width,
-                        lp_bound,
-                        splitters_ref,
-                        cancelled,
-                        deadline,
-                        &mut nop,
-                        columns as u64,
-                    )
-                    .map(|(output, mut poly_stats)| {
-                        poly_stats.generate_nanos += gen_nanos;
-                        (output, poly_stats)
-                    });
-                    (index, true, out)
-                }));
+                handles.push(scope.spawn(move || run_poly(index)));
             }
             for handle in handles {
                 match handle.join() {
@@ -1970,6 +1971,23 @@ where
                 }
             }
         });
+        #[cfg(target_arch = "wasm32")]
+        {
+            for &index in &batch {
+                match run_poly(index) {
+                    (index, generated, Ok(out)) => {
+                        if generated {
+                            round_generated += 1;
+                            polys_done += 1;
+                        }
+                        round_out.push((index, out))
+                    }
+                    (_, _, Err(_)) => {
+                        round_failed = true;
+                    }
+                }
+            }
+        }
         if round_failed {
             break 'rounds;
         }
@@ -2259,59 +2277,58 @@ where
             let toggles_ref: &SiqsToggleIndex = &toggles;
             let barrett_ref: &SiqsBarrettTable = &barrett;
             let splitters_ref: &[u64] = &splitters;
+            let run_poly = |index: usize| {
+                let gen_start = Instant::now();
+                let poly = match generate_polynomial_from(
+                    sieved,
+                    suitable_worker,
+                    target_a_ref,
+                    index * 3,
+                    factor_cap,
+                ) {
+                    Some(poly) => poly,
+                    None => {
+                        let mut empty = SiqsPolyCounters::default();
+                        empty.generate_nanos += gen_start.elapsed().as_nanos() as u64;
+                        return (
+                            index,
+                            false,
+                            Ok((
+                                (Vec::<Relation>::new(), Vec::<(Relation, Vec<u64>)>::new()),
+                                empty,
+                            )),
+                        );
+                    }
+                };
+                let gen_nanos = gen_start.elapsed().as_nanos() as u64;
+                let mut nop = |_: &ProgressEvent| Ok(());
+                let out = collect_one_poly(
+                    sieved,
+                    &poly,
+                    index as u64,
+                    base_ref,
+                    gammas_ref,
+                    toggles_ref,
+                    barrett_ref,
+                    half_width,
+                    lp_bound,
+                    splitters_ref,
+                    cancelled,
+                    attempt_deadline,
+                    &mut nop,
+                    columns as u64,
+                )
+                .map(|(output, mut poly_stats)| {
+                    poly_stats.generate_nanos += gen_nanos;
+                    (output, poly_stats)
+                });
+                (index, true, out)
+            };
+            #[cfg(not(target_arch = "wasm32"))]
             std::thread::scope(|scope| {
                 let mut handles = Vec::with_capacity(batch.len());
                 for &index in &batch {
-                    handles.push(scope.spawn(move || {
-                        let gen_start = Instant::now();
-                        let poly = match generate_polynomial_from(
-                            sieved,
-                            suitable_worker,
-                            target_a_ref,
-                            index * 3,
-                            factor_cap,
-                        ) {
-                            Some(poly) => poly,
-                            None => {
-                                let mut empty = SiqsPolyCounters::default();
-                                empty.generate_nanos += gen_start.elapsed().as_nanos() as u64;
-                                return (
-                                    index,
-                                    false,
-                                    Ok((
-                                        (
-                                            Vec::<Relation>::new(),
-                                            Vec::<(Relation, Vec<u64>)>::new(),
-                                        ),
-                                        empty,
-                                    )),
-                                );
-                            }
-                        };
-                        let gen_nanos = gen_start.elapsed().as_nanos() as u64;
-                        let mut nop = |_: &ProgressEvent| Ok(());
-                        let out = collect_one_poly(
-                            sieved,
-                            &poly,
-                            index as u64,
-                            base_ref,
-                            gammas_ref,
-                            toggles_ref,
-                            barrett_ref,
-                            half_width,
-                            lp_bound,
-                            splitters_ref,
-                            cancelled,
-                            attempt_deadline,
-                            &mut nop,
-                            columns as u64,
-                        )
-                        .map(|(output, mut poly_stats)| {
-                            poly_stats.generate_nanos += gen_nanos;
-                            (output, poly_stats)
-                        });
-                        (index, true, out)
-                    }));
+                    handles.push(scope.spawn(move || run_poly(index)));
                 }
                 for handle in handles {
                     match handle.join() {
@@ -2334,6 +2351,26 @@ where
                     }
                 }
             });
+            #[cfg(target_arch = "wasm32")]
+            {
+                for &index in &batch {
+                    match run_poly(index) {
+                        (index, generated, Ok(out)) => {
+                            if generated {
+                                round_generated += 1;
+                                polys_done += 1;
+                            }
+                            round_out.push((index, out))
+                        }
+                        (_, _, Err(FactorError::ResourceLimit(_))) => {
+                            round_stopped = true;
+                        }
+                        (_, _, Err(other)) => {
+                            round_failed = Some(other);
+                        }
+                    }
+                }
+            }
             if let Some(error) = round_failed {
                 return Err(error);
             }

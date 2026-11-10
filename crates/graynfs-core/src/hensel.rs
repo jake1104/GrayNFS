@@ -1,6 +1,7 @@
 use num_traits::{Euclid, ToPrimitive, Zero};
 use std::sync::atomic::{AtomicBool, Ordering};
-use std::time::Instant;
+
+use crate::time::Instant;
 
 use crate::field::{ExtensionField, is_square, square_root};
 use crate::integer::{Integer, integer_abs};

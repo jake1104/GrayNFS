@@ -14,6 +14,7 @@ pub mod linear_algebra;
 pub mod montgomery;
 pub mod number_field;
 pub mod options;
+pub mod par;
 pub mod pm1;
 pub mod poly;
 pub mod polynomial;
@@ -21,6 +22,7 @@ pub mod prime;
 pub mod relations;
 pub mod siqs;
 pub mod square_root;
+pub mod time;
 
 pub use error::FactorError;
 pub use factor::{

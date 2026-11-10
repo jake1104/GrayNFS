@@ -4,7 +4,8 @@ use crate::montgomery::Montgomery;
 use num_traits::Euclid;
 use std::sync::Mutex;
 use std::sync::atomic::{AtomicBool, Ordering};
-use std::time::Instant;
+
+use crate::time::Instant;
 
 const STAGE_TWO_CAP: u64 = 16_000_000;
 const MAX_DIGITS: u32 = 60;
@@ -1061,6 +1062,7 @@ pub(crate) fn ecm_cheap_report(
         let batch_end = (next_curve + workers as u64).min(max_curves + 1);
         let stop = AtomicBool::new(false);
         let found = Mutex::new(None);
+        #[cfg(not(target_arch = "wasm32"))]
         std::thread::scope(|scope| {
             let stop_flag = &stop;
             let found_slot = &found;
@@ -1086,6 +1088,30 @@ pub(crate) fn ecm_cheap_report(
                 });
             }
         });
+        #[cfg(target_arch = "wasm32")]
+        {
+            let stop_flag = &stop;
+            let found_slot = &found;
+            let table_ref = prime_table.as_deref();
+            let field_ref = &field;
+            for sigma in next_curve..batch_end {
+                let curve = sigma;
+                if stop_flag.load(Ordering::Relaxed) {
+                    continue;
+                }
+                let (hit, _, _) = ecm_single_curve(
+                    field_ref, n, bound_one, bound_two, table_ref, curve, deadline,
+                );
+                if let Some(divisor) = hit {
+                    if let Ok(mut slot) = found_slot.lock()
+                        && slot.is_none()
+                    {
+                        *slot = Some(divisor);
+                    }
+                    stop_flag.store(true, Ordering::Relaxed);
+                }
+            }
+        }
         curves_used += batch_end - next_curve;
         next_curve = batch_end;
         if let Some(divisor) = found
@@ -1196,6 +1222,7 @@ pub(crate) fn ecm_factor_report(
             let batch_end = (next_curve + (workers as u64).min(allowance)).min(budgeted + 1);
             let stop = AtomicBool::new(false);
             let found = Mutex::new(None);
+            #[cfg(not(target_arch = "wasm32"))]
             std::thread::scope(|scope| {
                 let stop_flag = &stop;
                 let found_slot = &found;
@@ -1225,6 +1252,34 @@ pub(crate) fn ecm_factor_report(
                     });
                 }
             });
+            #[cfg(target_arch = "wasm32")]
+            {
+                let stop_flag = &stop;
+                let found_slot = &found;
+                let table_ref = prime_table.as_deref();
+                let stage_one_acc = &stage_one_nanos;
+                let stage_two_acc = &stage_two_nanos;
+                let field_ref = &field;
+                for sigma in next_curve..batch_end {
+                    let curve = sigma;
+                    if stop_flag.load(Ordering::Relaxed) {
+                        continue;
+                    }
+                    let (hit, stage_one, stage_two) = ecm_single_curve(
+                        field_ref, n, bound_one, bound_two, table_ref, curve, deadline,
+                    );
+                    stage_one_acc.fetch_add(stage_one, Ordering::Relaxed);
+                    stage_two_acc.fetch_add(stage_two, Ordering::Relaxed);
+                    if let Some(divisor) = hit {
+                        if let Ok(mut slot) = found_slot.lock()
+                            && slot.is_none()
+                        {
+                            *slot = Some(divisor);
+                        }
+                        stop_flag.store(true, Ordering::Relaxed);
+                    }
+                }
+            }
             curves_used += batch_end - next_curve;
             next_curve = batch_end;
             if let Some(divisor) = found

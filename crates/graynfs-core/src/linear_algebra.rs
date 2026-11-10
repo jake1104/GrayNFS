@@ -10,6 +10,7 @@ impl Masked for Relation {
     }
 }
 
+#[cfg(not(target_arch = "wasm32"))]
 fn join_candidate_worker(
     handle: std::thread::ScopedJoinHandle<'_, Vec<(usize, usize, Vec<u64>)>>,
 ) -> Vec<(usize, usize, Vec<u64>)> {
@@ -142,36 +143,44 @@ pub fn rank_and_dependencies<M: Masked>(
         let used = &used;
         let combo_slab = &combo_slab;
         let combo_filled = &combo_filled;
+        let run_chunk = |rows: &[usize]| {
+            let mut local: Vec<(usize, usize, Vec<u64>)> = Vec::new();
+            let mut combo = vec![0_u64; relation_words];
+            for &relation_index in rows {
+                combo.fill(0);
+                combo[relation_index / 64] |= 1_u64 << (relation_index % 64);
+                for &used_column in &used[relation_index] {
+                    if combo_filled[used_column] {
+                        let previous = &combo_slab
+                            [used_column * relation_words..(used_column + 1) * relation_words];
+                        for (left, right) in combo.iter_mut().zip(previous.iter()) {
+                            *left ^= *right;
+                        }
+                    }
+                }
+                let weight = combo.iter().map(|word| word.count_ones() as usize).sum();
+                if weight >= min_weight {
+                    local.push((weight, relation_index, combo.clone()));
+                }
+            }
+            local
+        };
+        #[cfg(not(target_arch = "wasm32"))]
         std::thread::scope(|scope| {
             let mut handles = Vec::new();
             for rows in candidate_rows.chunks(chunk) {
-                handles.push(scope.spawn(move || {
-                    let mut local: Vec<(usize, usize, Vec<u64>)> = Vec::new();
-                    let mut combo = vec![0_u64; relation_words];
-                    for &relation_index in rows {
-                        combo.fill(0);
-                        combo[relation_index / 64] |= 1_u64 << (relation_index % 64);
-                        for &used_column in &used[relation_index] {
-                            if combo_filled[used_column] {
-                                let previous = &combo_slab[used_column * relation_words
-                                    ..(used_column + 1) * relation_words];
-                                for (left, right) in combo.iter_mut().zip(previous.iter()) {
-                                    *left ^= *right;
-                                }
-                            }
-                        }
-                        let weight = combo.iter().map(|word| word.count_ones() as usize).sum();
-                        if weight >= min_weight {
-                            local.push((weight, relation_index, combo.clone()));
-                        }
-                    }
-                    local
-                }));
+                handles.push(scope.spawn(move || run_chunk(rows)));
             }
             for handle in handles {
                 candidates.extend(join_candidate_worker(handle));
             }
         });
+        #[cfg(target_arch = "wasm32")]
+        {
+            for rows in candidate_rows.chunks(chunk) {
+                candidates.extend(run_chunk(rows));
+            }
+        }
     }
     if candidates.len() > limit {
         candidates.select_nth_unstable_by_key(limit, |(weight, sequence, _)| (*weight, *sequence));

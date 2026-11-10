@@ -12,3 +12,7 @@ num-traits.workspace = true
 thiserror.workspace = true
 rand.workspace = true
 rand_chacha.workspace = true
+
+[target.'cfg(target_arch = "wasm32")'.dependencies]
+js-sys = "0.3"
+getrandom = { version = "0.3", features = ["wasm_js"] }

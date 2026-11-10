@@ -21,6 +21,8 @@ build/
 htmlcov/
 # Maturin / installer leftovers
 dist/
+# wasm-pack output
+crates/graynfs-wasm/pkg/
 # Profiling data
 *.profdata
 # Local run logs at the repo root

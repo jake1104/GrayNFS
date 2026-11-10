@@ -1,4 +1,4 @@
-# GrayNFS · [![Version](https://img.shields.io/badge/version-v0.2.4-blue.svg)](CHANGELOG.md) [![License: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE.md) [![CI](https://github.com/jake1104/GrayNFS/actions/workflows/ci.yml/badge.svg)](https://github.com/jake1104/GrayNFS/actions/workflows/ci.yml) [![Python](https://img.shields.io/badge/python-3.8%2B-blue.svg)](python/graynfs/__init__.py)
+# GrayNFS · [![Version](https://img.shields.io/badge/version-v0.2.5-blue.svg)](CHANGELOG.md) [![License: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE.md) [![CI](https://github.com/jake1104/GrayNFS/actions/workflows/ci.yml/badge.svg)](https://github.com/jake1104/GrayNFS/actions/workflows/ci.yml) [![Python](https://img.shields.io/badge/python-3.8%2B-blue.svg)](python/graynfs/__init__.py)
 
 Pure-Rust GNFS implementation (degrees 2-5) with trial division, Fermat, p-1/p+1, ECM front stages; the fastest verified answer wins.
 
@@ -52,7 +52,7 @@ Prerequisites: a Rust stable toolchain plus a C compiler (the default allocator 
 cargo build -p graynfs-cli --release
 .\target\release\graynfs.exe 1000036000099
 python -m maturin build --release --out dist
-python -m pip install --force-reinstall --no-deps dist\graynfs-0.2.4-cp38-abi3-win_amd64.whl
+python -m pip install --force-reinstall --no-deps dist\graynfs-0.2.5-cp38-abi3-win_amd64.whl
 ```
 
 ## CLI usage
@@ -192,11 +192,11 @@ graynfs.factor(100160063, degree=3)             # [10007, 10009]
 graynfs.factor_report(100160063)["factors"]     # [10007, 10009]
 graynfs.factor_report(100160063)["method"]      # 'fermat'
 graynfs.is_probable_prime(10007)                # True
-graynfs.version()                               # '0.2.4'
+graynfs.version()                               # '0.2.5'
 graynfs.stage_timings(100160063, degree=3)      # [{'stage': 'fermat', ...}]
 ```
 
-All outputs above were verified live against the installed 0.2.4 wheel.
+All outputs above were verified live against the installed 0.2.5 wheel.
 
 ### Python keywords at a glance
 
@@ -505,11 +505,42 @@ Release, wheel, and Python suite:
 ```powershell
 cargo build -p graynfs-cli --release
 python -m maturin build --release --out dist
-python -m pip install --force-reinstall --no-deps dist\graynfs-0.2.4-cp38-abi3-win_amd64.whl
+python -m pip install --force-reinstall --no-deps dist\graynfs-0.2.5-cp38-abi3-win_amd64.whl
 python -m pytest -q python/tests
 ```
 
 `gate.ps1 -Full` runs the full local gate in CI step order (fmt, clippy, test, release build, quarantine, wheel build + install, pytest, version guard, API surface, invariants, degree spot-checks, perf smoke).
+
+## WebAssembly
+
+`crates/graynfs-wasm` builds the engine for the browser (`wasm32-unknown-unknown`) with
+`wasm-bindgen`:
+
+```powershell
+npx --yes wasm-pack build crates/graynfs-wasm --target web --release --out-dir pkg
+```
+
+The generated module (`crates/graynfs-wasm/pkg/`) exposes two functions:
+
+- `factorize(decimal, budgetMs) -> string` — always returns JSON and never throws.
+  Success carries `ok, input, factors, factorConfidence, method, degree, polynomial,
+  root, relations, rank, elapsedMs` and `stages` (`stage, degree, ms, detail` per row).
+  Failure carries `ok: false`, `input` and `error`, for example
+  `"resource limit exceeded: ..."`.
+- `version() -> string` — the crate version.
+
+```javascript
+import init, { factorize } from "./pkg/graynfs_wasm.js";
+
+await init();
+console.log(factorize("600851475143", 5000));
+```
+
+`budgetMs` is clamped to 1000–10000 ms. The wasm target has no threads, so the build
+runs the whole cascade on one worker with a 512 MiB memory budget and a fixed seed; small
+and medium inputs resolve immediately, while larger ones end with a resource-limit
+result instead of hanging. `node scripts/wasm-smoke.mjs` checks the built package against
+`10403`, `600851475143` and a 105-bit input that must hit the time budget.
 
 ## Contributing
 
