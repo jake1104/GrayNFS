@@ -1,0 +1,46 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>GrayNFS WASM worker demo</title>
+<link rel="stylesheet" href="./style.css">
+</head>
+<body>
+<main class="wrap">
+<h1>GrayNFS WASM worker demo</h1>
+<p class="warn">Do not call <code>factorize()</code> on the main thread: it is synchronous and blocks the page until it returns. This demo runs it inside a Web Worker instead.</p>
+<p class="note">The WASM API exposes no progress events, so the UI shows idle, running, done, or cancelled states only.</p>
+<section class="controls">
+<label for="input">Integer to factor</label>
+<input id="input" type="text" inputmode="numeric" value="600851475143" spellcheck="false">
+<label for="budget">Budget (ms, clamped to 1000-10000 by the module)</label>
+<input id="budget" type="number" value="5000" min="1000" max="10000" step="500">
+<div class="buttons">
+<button id="factor" type="button">Factor</button>
+<button id="cancel" type="button" disabled>Cancel</button>
+</div>
+</section>
+<section class="status">
+<p>Status: <span id="status">idle</span></p>
+<p>Wall clock: <span id="wall">-</span></p>
+</section>
+<section class="results">
+<h2>Result</h2>
+<dl>
+<dt>factors</dt><dd id="factors">-</dd>
+<dt>algorithm (method)</dt><dd id="method">-</dd>
+<dt>degree</dt><dd id="degree">-</dd>
+<dt>polynomial</dt><dd id="poly">-</dd>
+<dt>root</dt><dd id="root">-</dd>
+<dt>relations</dt><dd id="relations">-</dd>
+<dt>rank</dt><dd id="rank">-</dd>
+<dt>reported elapsedMs</dt><dd id="elapsed">-</dd>
+</dl>
+<h3>Raw JSON</h3>
+<pre id="raw">-</pre>
+</section>
+</main>
+<script type="module" src="./app.js"></script>
+</body>
+</html>

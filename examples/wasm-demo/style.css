@@ -1,0 +1,67 @@
+body {
+  font-family: system-ui, sans-serif;
+  margin: 0;
+  background: #f6f6f4;
+  color: #1c1c1a;
+}
+
+.wrap {
+  max-width: 44rem;
+  margin: 0 auto;
+  padding: 1.5rem;
+}
+
+.warn {
+  border-left: 0.25rem solid #b3541e;
+  background: #fdf0e4;
+  padding: 0.75rem;
+}
+
+.note {
+  color: #55534e;
+}
+
+.controls {
+  display: grid;
+  gap: 0.5rem;
+  margin-top: 1rem;
+}
+
+input {
+  padding: 0.5rem;
+  font-size: 1rem;
+  width: 100%;
+  box-sizing: border-box;
+}
+
+.buttons {
+  display: flex;
+  gap: 0.5rem;
+}
+
+button {
+  padding: 0.5rem 1rem;
+  font-size: 1rem;
+}
+
+dl {
+  display: grid;
+  grid-template-columns: 12rem 1fr;
+  gap: 0.25rem 1rem;
+}
+
+dt {
+  font-weight: 600;
+}
+
+dd {
+  margin: 0;
+  overflow-wrap: anywhere;
+}
+
+pre {
+  background: #fff;
+  border: 1px solid #ddd;
+  padding: 0.75rem;
+  overflow-x: auto;
+}
