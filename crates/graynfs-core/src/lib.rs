@@ -21,6 +21,7 @@ pub mod polynomial;
 pub mod prime;
 pub mod relations;
 pub mod siqs;
+pub mod snfs;
 pub mod square_root;
 pub mod time;
 
