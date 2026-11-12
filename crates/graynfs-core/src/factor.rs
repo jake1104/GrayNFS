@@ -2423,6 +2423,63 @@ mod factor_tests {
     }
 
     #[test]
+    fn zero_elapsed_reproduces_wrong_degree_pick() {
+        let incumbent = Some((2, 6.0, Some(50)));
+        let (best, _) = super::note_pilot_for_escalation(
+            incumbent,
+            None,
+            3,
+            Some(100),
+            0,
+            false,
+            Some(400),
+            100,
+            None,
+        );
+        assert_eq!(best, Some((3, 100.0, Some(4))));
+        assert_eq!(
+            super::escalation_pick(best, None),
+            Some((3, "best_rated", Some(100.0)))
+        );
+        let collector = super::TimingCollector::default();
+        collector.record_elapsed("select_polynomial", Some(3), 30, "m=7".to_string());
+        collector.record_elapsed("number_field", Some(3), 7, "field built".to_string());
+        collector.record_elapsed("factor_base", Some(3), 10, "columns=9".to_string());
+        let split = super::gnfs_stage_split(0, Some(&collector), 3);
+        assert_eq!(split.collect_ms, 0);
+        let inflated = 100.0f64 / split.collect_ms.max(1) as f64;
+        assert_eq!(inflated, 100.0);
+        let idle = super::TimingCollector::default();
+        idle.add_cpu_ms(0, 16);
+        assert_eq!(idle.cpu_used_ms(), 0);
+    }
+
+    #[test]
+    fn measured_collect_keeps_correct_degree_pick() {
+        let incumbent = Some((2, 6.0, Some(50)));
+        let (best, limited) = super::note_pilot_for_escalation(
+            incumbent,
+            None,
+            3,
+            Some(100),
+            200,
+            false,
+            Some(400),
+            100,
+            None,
+        );
+        assert_eq!(best, incumbent);
+        assert_eq!(limited, None);
+        assert_eq!(
+            super::escalation_pick(best, limited),
+            Some((2, "best_rated", Some(6.0)))
+        );
+        let live = super::TimingCollector::default();
+        live.add_cpu_ms(12, 16);
+        assert_eq!(live.cpu_used_ms(), 192);
+    }
+
+    #[test]
     fn prefilter_rejects_recorded_hw140_deg3_estimate() {
         let n = super::parse_decimal("825344960245717185263001325382831186370797")
             .expect("valid decimal");
