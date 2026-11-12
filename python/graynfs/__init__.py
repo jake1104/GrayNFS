@@ -79,6 +79,7 @@ def factor(
     enable_double_large_primes: bool = False,
     seed: int | None = None,
     max_cpu_seconds: int | None = None,
+    use_snfs: bool = True,
 ) -> list[int]:
     """Factor n into ascending prime factors; keywords mirror the documented surface (None means auto or unset, True/False toggles keep or skip a stage)."""
     try:
@@ -107,6 +108,7 @@ def factor(
                 enable_double_large_primes,
                 seed,
                 max_cpu_seconds,
+                use_snfs,
             )
         ]
     except ValueError as exc:
@@ -137,6 +139,7 @@ def factor_with_progress(
     enable_double_large_primes: bool = False,
     seed: int | None = None,
     max_cpu_seconds: int | None = None,
+    use_snfs: bool = True,
 ) -> list[int]:
     """Factor n like factor, but call callback({stage, current, total, message}) at each stage boundary; the callback is required here (the raw binding accepts None and falls back to a plain factor). Return a falsy value (e.g. False) from the callback to cancel the operation (surfaced as GrayNFSError with category=cancelled); truthy values and None continue."""
     if not callable(callback):
@@ -168,6 +171,7 @@ def factor_with_progress(
                 enable_double_large_primes,
                 seed,
                 max_cpu_seconds,
+                use_snfs,
             )
         ]
     except ValueError as exc:
@@ -232,6 +236,7 @@ def stage_timings(
     enable_double_large_primes: bool = False,
     seed: int | None = None,
     max_cpu_seconds: int | None = None,
+    use_snfs: bool = True,
 ) -> list[dict[str, Any]]:
     """Return per-stage timing records [{stage, degree, elapsed_ms, detail}] for factoring n without printing."""
     try:
@@ -265,6 +270,7 @@ def stage_timings(
                 enable_double_large_primes,
                 seed,
                 max_cpu_seconds,
+                use_snfs,
             )
         ]
     except ValueError as exc:
@@ -299,6 +305,7 @@ def factor_batch(
     enable_double_large_primes: bool = False,
     seed: int | None = None,
     max_cpu_seconds: int | None = None,
+    use_snfs: bool = True,
 ) -> list[list[int] | GrayNFSError]:
     """Factor each input in ns with the shared factor keywords; fail_fast=True raises on the first failure while False records the GrayNFSError in place."""
     results: list[list[int] | GrayNFSError] = []
@@ -327,6 +334,7 @@ def factor_batch(
                     enable_double_large_primes=enable_double_large_primes,
                     seed=seed,
                     max_cpu_seconds=max_cpu_seconds,
+                    use_snfs=use_snfs,
                 )
             )
         except GrayNFSError as exc:
@@ -359,6 +367,7 @@ def factor_report(
     enable_double_large_primes: bool = False,
     seed: int | None = None,
     max_cpu_seconds: int | None = None,
+    use_snfs: bool = True,
 ) -> dict[str, Any]:
     """Factor n once and return {factors, factor_confidence, polynomial, root, method, degree, relations, rank, elapsed_ms, timings}."""
     try:
@@ -385,6 +394,7 @@ def factor_report(
             enable_double_large_primes,
             seed,
             max_cpu_seconds,
+            use_snfs,
         )
     except ValueError as exc:
         raise _to_gray_error(exc)

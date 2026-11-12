@@ -1,0 +1,668 @@
+{
+  "budget_seconds": 120,
+  "threads": 1,
+  "reps": 3,
+  "flags": "--skip-preprocessing --threads 1",
+  "rows": [
+    {
+      "n": "2001",
+      "degree": 3,
+      "snfs": true,
+      "rep": 1,
+      "elapsed_ms": 117,
+      "wall_ms": 171.3,
+      "factors": [
+        "3",
+        "23",
+        "29"
+      ],
+      "method": "gnfs",
+      "relations": 1342,
+      "rank": 519,
+      "polynomial": "x^3 + 4 with root 20 modulo N",
+      "snfs_marker": true,
+      "product_ok": true
+    },
+    {
+      "n": "2001",
+      "degree": 3,
+      "snfs": true,
+      "rep": 2,
+      "elapsed_ms": 122,
+      "wall_ms": 155.1,
+      "factors": [
+        "3",
+        "23",
+        "29"
+      ],
+      "method": "gnfs",
+      "relations": 1342,
+      "rank": 519,
+      "polynomial": "x^3 + 4 with root 20 modulo N",
+      "snfs_marker": true,
+      "product_ok": true
+    },
+    {
+      "n": "2001",
+      "degree": 3,
+      "snfs": true,
+      "rep": 3,
+      "elapsed_ms": 124,
+      "wall_ms": 163.5,
+      "factors": [
+        "3",
+        "23",
+        "29"
+      ],
+      "method": "gnfs",
+      "relations": 1342,
+      "rank": 519,
+      "polynomial": "x^3 + 4 with root 20 modulo N",
+      "snfs_marker": true,
+      "product_ok": true
+    },
+    {
+      "n": "2001",
+      "degree": 3,
+      "snfs": false,
+      "rep": 1,
+      "elapsed_ms": 149,
+      "wall_ms": 187.2,
+      "factors": [
+        "3",
+        "23",
+        "29"
+      ],
+      "method": "gnfs",
+      "relations": 1357,
+      "rank": 548,
+      "polynomial": "x^3 + 1455 with root 7 modulo N",
+      "snfs_marker": false,
+      "product_ok": true
+    },
+    {
+      "n": "2001",
+      "degree": 3,
+      "snfs": false,
+      "rep": 2,
+      "elapsed_ms": 148,
+      "wall_ms": 170.1,
+      "factors": [
+        "3",
+        "23",
+        "29"
+      ],
+      "method": "gnfs",
+      "relations": 1357,
+      "rank": 548,
+      "polynomial": "x^3 + 1455 with root 7 modulo N",
+      "snfs_marker": false,
+      "product_ok": true
+    },
+    {
+      "n": "2001",
+      "degree": 3,
+      "snfs": false,
+      "rep": 3,
+      "elapsed_ms": 189,
+      "wall_ms": 215.1,
+      "factors": [
+        "3",
+        "23",
+        "29"
+      ],
+      "method": "gnfs",
+      "relations": 1357,
+      "rank": 548,
+      "polynomial": "x^3 + 1455 with root 7 modulo N",
+      "snfs_marker": false,
+      "product_ok": true
+    },
+    {
+      "n": "3455",
+      "degree": 3,
+      "snfs": true,
+      "rep": 1,
+      "elapsed_ms": 66,
+      "wall_ms": 111.3,
+      "factors": [
+        "5",
+        "691"
+      ],
+      "method": "gnfs",
+      "relations": 670,
+      "rank": 251,
+      "polynomial": "x^3 + -4 with root 24 modulo N",
+      "snfs_marker": true,
+      "product_ok": true
+    },
+    {
+      "n": "3455",
+      "degree": 3,
+      "snfs": true,
+      "rep": 2,
+      "elapsed_ms": 60,
+      "wall_ms": 102.4,
+      "factors": [
+        "5",
+        "691"
+      ],
+      "method": "gnfs",
+      "relations": 670,
+      "rank": 251,
+      "polynomial": "x^3 + -4 with root 24 modulo N",
+      "snfs_marker": true,
+      "product_ok": true
+    },
+    {
+      "n": "3455",
+      "degree": 3,
+      "snfs": true,
+      "rep": 3,
+      "elapsed_ms": 67,
+      "wall_ms": 114.3,
+      "factors": [
+        "5",
+        "691"
+      ],
+      "method": "gnfs",
+      "relations": 670,
+      "rank": 251,
+      "polynomial": "x^3 + -4 with root 24 modulo N",
+      "snfs_marker": true,
+      "product_ok": true
+    },
+    {
+      "n": "3455",
+      "degree": 3,
+      "snfs": false,
+      "rep": 1,
+      "elapsed_ms": 87,
+      "wall_ms": 128.0,
+      "factors": [
+        "5",
+        "691"
+      ],
+      "method": "gnfs",
+      "relations": 673,
+      "rank": 259,
+      "polynomial": "x^3 + 2420 with root 9 modulo N",
+      "snfs_marker": false,
+      "product_ok": true
+    },
+    {
+      "n": "3455",
+      "degree": 3,
+      "snfs": false,
+      "rep": 2,
+      "elapsed_ms": 73,
+      "wall_ms": 102.5,
+      "factors": [
+        "5",
+        "691"
+      ],
+      "method": "gnfs",
+      "relations": 673,
+      "rank": 259,
+      "polynomial": "x^3 + 2420 with root 9 modulo N",
+      "snfs_marker": false,
+      "product_ok": true
+    },
+    {
+      "n": "3455",
+      "degree": 3,
+      "snfs": false,
+      "rep": 3,
+      "elapsed_ms": 74,
+      "wall_ms": 99.3,
+      "factors": [
+        "5",
+        "691"
+      ],
+      "method": "gnfs",
+      "relations": 673,
+      "rank": 259,
+      "polynomial": "x^3 + 2420 with root 9 modulo N",
+      "snfs_marker": false,
+      "product_ok": true
+    },
+    {
+      "n": "10001",
+      "degree": 4,
+      "snfs": true,
+      "rep": 1,
+      "elapsed_ms": 119,
+      "wall_ms": 162.7,
+      "factors": [
+        "73",
+        "137"
+      ],
+      "method": "gnfs",
+      "relations": 715,
+      "rank": 319,
+      "polynomial": "x^4 + 1 with root 10 modulo N",
+      "snfs_marker": true,
+      "product_ok": true
+    },
+    {
+      "n": "10001",
+      "degree": 4,
+      "snfs": true,
+      "rep": 2,
+      "elapsed_ms": 134,
+      "wall_ms": 170.8,
+      "factors": [
+        "73",
+        "137"
+      ],
+      "method": "gnfs",
+      "relations": 715,
+      "rank": 319,
+      "polynomial": "x^4 + 1 with root 10 modulo N",
+      "snfs_marker": true,
+      "product_ok": true
+    },
+    {
+      "n": "10001",
+      "degree": 4,
+      "snfs": true,
+      "rep": 3,
+      "elapsed_ms": 81,
+      "wall_ms": 117.2,
+      "factors": [
+        "73",
+        "137"
+      ],
+      "method": "gnfs",
+      "relations": 715,
+      "rank": 319,
+      "polynomial": "x^4 + 1 with root 10 modulo N",
+      "snfs_marker": true,
+      "product_ok": true
+    },
+    {
+      "n": "10001",
+      "degree": 4,
+      "snfs": false,
+      "rep": 1,
+      "elapsed_ms": 6134,
+      "wall_ms": 6167.0,
+      "factors": [
+        "73",
+        "137"
+      ],
+      "method": "gnfs",
+      "relations": 736,
+      "rank": 313,
+      "polynomial": "x^4 + 2961 with root 8 modulo N",
+      "snfs_marker": false,
+      "product_ok": true
+    },
+    {
+      "n": "10001",
+      "degree": 4,
+      "snfs": false,
+      "rep": 2,
+      "elapsed_ms": 6152,
+      "wall_ms": 6187.5,
+      "factors": [
+        "73",
+        "137"
+      ],
+      "method": "gnfs",
+      "relations": 736,
+      "rank": 313,
+      "polynomial": "x^4 + 2961 with root 8 modulo N",
+      "snfs_marker": false,
+      "product_ok": true
+    },
+    {
+      "n": "10001",
+      "degree": 4,
+      "snfs": false,
+      "rep": 3,
+      "elapsed_ms": 6147,
+      "wall_ms": 6171.3,
+      "factors": [
+        "73",
+        "137"
+      ],
+      "method": "gnfs",
+      "relations": 736,
+      "rank": 313,
+      "polynomial": "x^4 + 2961 with root 8 modulo N",
+      "snfs_marker": false,
+      "product_ok": true
+    },
+    {
+      "n": "3887",
+      "degree": 4,
+      "snfs": true,
+      "rep": 1,
+      "elapsed_ms": 543,
+      "wall_ms": 599.3,
+      "factors": [
+        "13",
+        "13",
+        "23"
+      ],
+      "method": "gnfs+perfect_square+prime",
+      "relations": 666,
+      "rank": 372,
+      "polynomial": "x^4 + -27 with root 18 modulo N",
+      "snfs_marker": true,
+      "product_ok": true
+    },
+    {
+      "n": "3887",
+      "degree": 4,
+      "snfs": true,
+      "rep": 2,
+      "elapsed_ms": 548,
+      "wall_ms": 591.6,
+      "factors": [
+        "13",
+        "13",
+        "23"
+      ],
+      "method": "gnfs+perfect_square+prime",
+      "relations": 666,
+      "rank": 372,
+      "polynomial": "x^4 + -27 with root 18 modulo N",
+      "snfs_marker": true,
+      "product_ok": true
+    },
+    {
+      "n": "3887",
+      "degree": 4,
+      "snfs": true,
+      "rep": 3,
+      "elapsed_ms": 533,
+      "wall_ms": 570.0,
+      "factors": [
+        "13",
+        "13",
+        "23"
+      ],
+      "method": "gnfs+perfect_square+prime",
+      "relations": 666,
+      "rank": 372,
+      "polynomial": "x^4 + -27 with root 18 modulo N",
+      "snfs_marker": true,
+      "product_ok": true
+    },
+    {
+      "n": "3887",
+      "degree": 4,
+      "snfs": false,
+      "rep": 1,
+      "elapsed_ms": 4645,
+      "wall_ms": 4678.3,
+      "factors": [
+        "13",
+        "13",
+        "23"
+      ],
+      "method": "gnfs+perfect_square+prime",
+      "relations": 741,
+      "rank": 328,
+      "polynomial": "x^4 + 3735 with root 2 modulo N",
+      "snfs_marker": false,
+      "product_ok": true
+    },
+    {
+      "n": "3887",
+      "degree": 4,
+      "snfs": false,
+      "rep": 2,
+      "elapsed_ms": 4693,
+      "wall_ms": 4721.8,
+      "factors": [
+        "13",
+        "13",
+        "23"
+      ],
+      "method": "gnfs+perfect_square+prime",
+      "relations": 741,
+      "rank": 328,
+      "polynomial": "x^4 + 3735 with root 2 modulo N",
+      "snfs_marker": false,
+      "product_ok": true
+    },
+    {
+      "n": "3887",
+      "degree": 4,
+      "snfs": false,
+      "rep": 3,
+      "elapsed_ms": 4634,
+      "wall_ms": 4670.2,
+      "factors": [
+        "13",
+        "13",
+        "23"
+      ],
+      "method": "gnfs+perfect_square+prime",
+      "relations": 741,
+      "rank": 328,
+      "polynomial": "x^4 + 3735 with root 2 modulo N",
+      "snfs_marker": false,
+      "product_ok": true
+    },
+    {
+      "n": "15553",
+      "degree": 5,
+      "snfs": true,
+      "rep": 1,
+      "elapsed_ms": 197,
+      "wall_ms": 241.8,
+      "factors": [
+        "103",
+        "151"
+      ],
+      "method": "gnfs",
+      "relations": 657,
+      "rank": 330,
+      "polynomial": "x^5 + 16 with root 12 modulo N",
+      "snfs_marker": true,
+      "product_ok": true
+    },
+    {
+      "n": "15553",
+      "degree": 5,
+      "snfs": true,
+      "rep": 2,
+      "elapsed_ms": 170,
+      "wall_ms": 198.7,
+      "factors": [
+        "103",
+        "151"
+      ],
+      "method": "gnfs",
+      "relations": 657,
+      "rank": 330,
+      "polynomial": "x^5 + 16 with root 12 modulo N",
+      "snfs_marker": true,
+      "product_ok": true
+    },
+    {
+      "n": "15553",
+      "degree": 5,
+      "snfs": true,
+      "rep": 3,
+      "elapsed_ms": 260,
+      "wall_ms": 296.6,
+      "factors": [
+        "103",
+        "151"
+      ],
+      "method": "gnfs",
+      "relations": 657,
+      "rank": 330,
+      "polynomial": "x^5 + 16 with root 12 modulo N",
+      "snfs_marker": true,
+      "product_ok": true
+    },
+    {
+      "n": "15553",
+      "degree": 5,
+      "snfs": false,
+      "rep": 1,
+      "elapsed_ms": 6755,
+      "wall_ms": 6801.5,
+      "factors": [
+        "103",
+        "151"
+      ],
+      "method": "gnfs",
+      "relations": 705,
+      "rank": 365,
+      "polynomial": "x^5 + 6978 with root 5 modulo N",
+      "snfs_marker": false,
+      "product_ok": true
+    },
+    {
+      "n": "15553",
+      "degree": 5,
+      "snfs": false,
+      "rep": 2,
+      "elapsed_ms": 6771,
+      "wall_ms": 6803.2,
+      "factors": [
+        "103",
+        "151"
+      ],
+      "method": "gnfs",
+      "relations": 705,
+      "rank": 365,
+      "polynomial": "x^5 + 6978 with root 5 modulo N",
+      "snfs_marker": false,
+      "product_ok": true
+    },
+    {
+      "n": "15553",
+      "degree": 5,
+      "snfs": false,
+      "rep": 3,
+      "elapsed_ms": 6716,
+      "wall_ms": 6747.4,
+      "factors": [
+        "103",
+        "151"
+      ],
+      "method": "gnfs",
+      "relations": 705,
+      "rank": 365,
+      "polynomial": "x^5 + 6978 with root 5 modulo N",
+      "snfs_marker": false,
+      "product_ok": true
+    },
+    {
+      "n": "2047",
+      "degree": 5,
+      "snfs": true,
+      "rep": 1,
+      "elapsed_ms": 125,
+      "wall_ms": 173.4,
+      "factors": [
+        "23",
+        "89"
+      ],
+      "method": "gnfs",
+      "relations": 709,
+      "rank": 338,
+      "polynomial": "x^5 + -16 with root 8 modulo N",
+      "snfs_marker": true,
+      "product_ok": true
+    },
+    {
+      "n": "2047",
+      "degree": 5,
+      "snfs": true,
+      "rep": 2,
+      "elapsed_ms": 143,
+      "wall_ms": 180.2,
+      "factors": [
+        "23",
+        "89"
+      ],
+      "method": "gnfs",
+      "relations": 709,
+      "rank": 338,
+      "polynomial": "x^5 + -16 with root 8 modulo N",
+      "snfs_marker": true,
+      "product_ok": true
+    },
+    {
+      "n": "2047",
+      "degree": 5,
+      "snfs": true,
+      "rep": 3,
+      "elapsed_ms": 122,
+      "wall_ms": 148.1,
+      "factors": [
+        "23",
+        "89"
+      ],
+      "method": "gnfs",
+      "relations": 709,
+      "rank": 338,
+      "polynomial": "x^5 + -16 with root 8 modulo N",
+      "snfs_marker": true,
+      "product_ok": true
+    },
+    {
+      "n": "2047",
+      "degree": 5,
+      "snfs": false,
+      "rep": 1,
+      "elapsed_ms": 2513,
+      "wall_ms": 2543.3,
+      "factors": [
+        "23",
+        "89"
+      ],
+      "method": "gnfs",
+      "relations": 673,
+      "rank": 362,
+      "polynomial": "x^5 + 2030 with root 1 modulo N",
+      "snfs_marker": false,
+      "product_ok": true
+    },
+    {
+      "n": "2047",
+      "degree": 5,
+      "snfs": false,
+      "rep": 2,
+      "elapsed_ms": 2493,
+      "wall_ms": 2532.0,
+      "factors": [
+        "23",
+        "89"
+      ],
+      "method": "gnfs",
+      "relations": 673,
+      "rank": 362,
+      "polynomial": "x^5 + 2030 with root 1 modulo N",
+      "snfs_marker": false,
+      "product_ok": true
+    },
+    {
+      "n": "2047",
+      "degree": 5,
+      "snfs": false,
+      "rep": 3,
+      "elapsed_ms": 2382,
+      "wall_ms": 2407.5,
+      "factors": [
+        "23",
+        "89"
+      ],
+      "method": "gnfs",
+      "relations": 673,
+      "rank": 362,
+      "polynomial": "x^5 + 2030 with root 1 modulo N",
+      "snfs_marker": false,
+      "product_ok": true
+    }
+  ]
+}

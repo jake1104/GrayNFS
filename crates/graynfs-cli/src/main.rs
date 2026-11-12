@@ -87,6 +87,11 @@ struct Cli {
     no_ecm: bool,
     #[arg(
         long,
+        help = "Disable the SNFS special-form path inside GNFS (generic polynomials only)"
+    )]
+    no_snfs: bool,
+    #[arg(
+        long,
         help = "Route degree 2 to the classic single-polynomial QS path instead of SIQS"
     )]
     no_mpqs: bool,
@@ -142,6 +147,7 @@ fn options_from_cli(cli: &Cli) -> FactorOptions {
         use_pm1: !cli.no_pm1,
         use_pp1: !cli.no_pp1,
         use_ecm: !cli.no_ecm,
+        use_snfs: !cli.no_snfs,
         use_mpqs: !cli.no_mpqs,
         threads: cli.threads,
         perf_mode: cli.perf_mode,

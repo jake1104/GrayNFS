@@ -611,7 +611,6 @@ fn gnfs_divisor_timed(
     deadline: Option<Instant>,
     collector: &TimingCollector,
 ) -> Result<(Integer, PolynomialPair, usize, usize), FactorError> {
-    let total = Instant::now();
     let degree = options.degree.unwrap_or(3);
     if degree < 3 {
         return Err(FactorError::UnsupportedDegree(degree));
@@ -626,6 +625,23 @@ fn gnfs_divisor_timed(
         timer.finish(detail);
         selection.polynomial
     };
+    gnfs_divisor_with_polynomial(n, &polynomial, options, cancelled, deadline, collector)
+}
+
+pub(crate) fn gnfs_divisor_with_polynomial(
+    n: &Integer,
+    preset: &PolynomialPair,
+    options: &FactorOptions,
+    cancelled: &AtomicBool,
+    deadline: Option<Instant>,
+    collector: &TimingCollector,
+) -> Result<(Integer, PolynomialPair, usize, usize), FactorError> {
+    let total = Instant::now();
+    let degree = preset.degree;
+    if degree < 3 {
+        return Err(FactorError::UnsupportedDegree(degree));
+    }
+    let polynomial = preset.clone();
     let field = {
         let timer = Timer::new(Some(collector), "number_field", Some(degree));
         let value = NumberField::new(degree, polynomial.coefficients.clone())
@@ -660,9 +676,9 @@ fn gnfs_divisor_timed(
             options.sieve_a_bound as i64,
             options_thread_count(options),
             budget_bytes,
-            need_mb as u64 <= budget_mb,
+            need_mb <= budget_mb,
         );
-        if need_mb as u64 > budget_mb {
+        if need_mb > budget_mb {
             return Err(FactorError::ResourceLimit(format!(
                 "the relation matrix would need about {need_mb} MiB, above the memory budget of {budget_mb} MiB"
             )));
@@ -2340,9 +2356,24 @@ fn classify_norm_small(
     )
 }
 
+pub(crate) fn snfs_binomial_shape(polynomial: &PolynomialPair) -> bool {
+    if !(3..=5).contains(&polynomial.degree) {
+        return false;
+    }
+    if polynomial.coefficients.len() != polynomial.degree + 1 {
+        return false;
+    }
+    if polynomial.coefficients[polynomial.degree] != Integer::from(1) {
+        return false;
+    }
+    polynomial.coefficients[1..polynomial.degree]
+        .iter()
+        .all(|coefficient| coefficient.is_zero())
+}
+
 #[allow(clippy::too_many_arguments)]
 fn classify_norm(
-    mut norm: Integer,
+    norm: Integer,
     a: &Integer,
     b: &Integer,
     n: &Integer,
@@ -2352,6 +2383,11 @@ fn classify_norm(
     mut mask: Vec<u64>,
     trial_primes: &[u64],
 ) -> Option<ClassifiedNorm> {
+    let mut norm = if snfs_binomial_shape(polynomial) {
+        integer_abs(&norm)
+    } else {
+        norm
+    };
     if norm >= Integer::from(0)
         && let Some(start) = norm.to_u128()
     {

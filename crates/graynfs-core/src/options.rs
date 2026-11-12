@@ -102,6 +102,7 @@ pub struct FactorOptions {
     pub use_ecm: bool,
     pub use_mpqs: bool,
     pub use_frobenius: bool,
+    pub use_snfs: bool,
     pub perf_mode: bool,
 }
 
@@ -131,6 +132,7 @@ impl Default for FactorOptions {
             use_ecm: true,
             use_mpqs: true,
             use_frobenius: false,
+            use_snfs: true,
             perf_mode: false,
         }
     }
@@ -361,6 +363,11 @@ mod tests {
         };
         assert!(enabled.use_frobenius);
         assert!(enabled.validate().is_ok());
+    }
+
+    #[test]
+    fn snfs_path_defaults_to_enabled() {
+        assert!(FactorOptions::default().use_snfs);
     }
 
     #[test]

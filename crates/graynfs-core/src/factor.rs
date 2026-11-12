@@ -255,6 +255,8 @@ struct GnfsStats {
     rank: usize,
 }
 
+type SnfsAttempt = (Integer, PolynomialPair, usize, usize, Vec<StageTiming>);
+
 pub fn classify_factor(value: &Integer) -> &'static str {
     if value.bits() <= 64 {
         if crate::prime::is_prime_u64_deterministic(value.to_u64_saturating()) {
@@ -1150,6 +1152,73 @@ fn preflight_collect_exceeds(n: &Integer, degree: usize, options: &FactorOptions
     crate::options::estimate_collect_bytes(1, max_a, workers) > attempt.memory_budget_bytes()
 }
 
+fn try_snfs_degree(
+    n: &Integer,
+    attempt: &FactorOptions,
+    degree: usize,
+    cancelled: &AtomicBool,
+    deadline: Option<Instant>,
+    timings: Option<&TimingCollector>,
+) -> Result<Option<SnfsAttempt>, FactorError> {
+    if !attempt.use_snfs {
+        return Ok(None);
+    }
+    let preset = match crate::snfs::snfs_preset_for(n, degree) {
+        Some(preset) => preset,
+        None => return Ok(None),
+    };
+    let outcome = match timings {
+        Some(collector) => general::gnfs_divisor_with_polynomial(
+            n,
+            &preset.polynomial,
+            attempt,
+            cancelled,
+            deadline,
+            collector,
+        )
+        .map(|found| (found, Vec::new())),
+        None => {
+            let staged = TimingCollector::default();
+            general::gnfs_divisor_with_polynomial(
+                n,
+                &preset.polynomial,
+                attempt,
+                cancelled,
+                deadline,
+                &staged,
+            )
+            .map(|found| (found, staged.snapshot()))
+        }
+    };
+    match outcome {
+        Ok(((divisor, polynomial, relations, rank), entries)) => match timings {
+            Some(collector) => {
+                collector.record_elapsed("select_polynomial", Some(degree), 0, preset.detail);
+                Ok(Some((divisor, polynomial, relations, rank, entries)))
+            }
+            None => {
+                let mut merged = entries;
+                merged.push(StageTiming {
+                    stage: "select_polynomial".to_string(),
+                    degree: Some(degree),
+                    elapsed_ms: 0,
+                    detail: preset.detail,
+                });
+                Ok(Some((divisor, polynomial, relations, rank, merged)))
+            }
+        },
+        Err(error)
+            if matches!(
+                error,
+                FactorError::Cancelled | FactorError::ResourceLimit(_)
+            ) =>
+        {
+            Err(error)
+        }
+        Err(_) => Ok(None),
+    }
+}
+
 #[allow(clippy::too_many_arguments)]
 fn run_degree<F>(
     n: &Integer,
@@ -1170,24 +1239,25 @@ where
     if degree == 2 {
         quadratic_divisor(n, &attempt, cancelled, deadline, progress, timings, pilot)
     } else {
-        match general::gnfs_divisor(n, &attempt, cancelled, deadline, timings) {
-            Ok((divisor, polynomial, relations, rank, entries)) => {
-                if let Some(collector) = timings {
-                    collector.merge(entries);
-                }
-                match emit(progress, "gnfs", 7, 7, "verified a congruence of squares") {
-                    Ok(()) => Ok((
-                        divisor,
-                        GnfsStats {
-                            polynomial,
-                            relations,
-                            rank,
-                        },
-                        "gnfs",
-                    )),
-                    Err(error) => Err(error),
-                }
-            }
+        let snfs = try_snfs_degree(n, &attempt, degree, cancelled, deadline, timings)?;
+        let outcome = match snfs {
+            Some(prebuilt) => prebuilt,
+            None => general::gnfs_divisor(n, &attempt, cancelled, deadline, timings)?,
+        };
+        let (divisor, polynomial, relations, rank, entries) = outcome;
+        if let Some(collector) = timings {
+            collector.merge(entries);
+        }
+        match emit(progress, "gnfs", 7, 7, "verified a congruence of squares") {
+            Ok(()) => Ok((
+                divisor,
+                GnfsStats {
+                    polynomial,
+                    relations,
+                    rank,
+                },
+                "gnfs",
+            )),
             Err(error) => Err(error),
         }
     }
