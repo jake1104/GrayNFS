@@ -241,14 +241,15 @@ fn factor_batch_line(
 }
 
 fn run_batch_lines(
-    lines: &[String],
+    reader: impl BufRead,
     options: &FactorOptions,
     token: &CancellationToken,
     show_progress: bool,
     continue_on_error: bool,
     emit: &mut dyn FnMut(&BatchRecord),
-) -> bool {
-    for line in lines {
+) -> std::io::Result<bool> {
+    for line in reader.lines() {
+        let line = line?;
         let trimmed = line.trim();
         if trimmed.is_empty() {
             continue;
@@ -261,13 +262,13 @@ fn run_batch_lines(
             .is_some_and(|text| text.starts_with("cancelled"));
         emit(&record);
         if cancelled || (failed && !continue_on_error) {
-            return false;
+            return Ok(false);
         }
         if token.is_cancelled() {
-            return false;
+            return Ok(false);
         }
     }
-    true
+    Ok(true)
 }
 
 fn batch_exit_code(failed: bool, cancelled: bool) -> ExitCode {
@@ -297,16 +298,6 @@ fn run_batch(cli: &Cli, input: &PathBuf, continue_on_error: bool) -> ExitCode {
         interrupt.cancel();
     });
     let reader = std::io::BufReader::new(file);
-    let mut lines = Vec::new();
-    for line in reader.lines() {
-        match line {
-            Ok(text) => lines.push(text),
-            Err(error) => {
-                eprintln!("error: io: cannot read batch line: {error}");
-                return ExitCode::FAILURE;
-            }
-        }
-    }
     let mut failed = false;
     let mut emit = |record: &BatchRecord| {
         if record.status == "error" {
@@ -314,14 +305,17 @@ fn run_batch(cli: &Cli, input: &PathBuf, continue_on_error: bool) -> ExitCode {
         }
         print_json(&batch_record_value(record));
     };
-    run_batch_lines(
-        &lines,
+    if let Err(error) = run_batch_lines(
+        reader,
         &options,
         &token,
         show_progress,
         continue_on_error,
         &mut emit,
-    );
+    ) {
+        eprintln!("error: io: cannot read batch line: {error}");
+        return ExitCode::FAILURE;
+    }
     batch_exit_code(failed, token.is_cancelled())
 }
 
@@ -739,11 +733,12 @@ mod tests {
     fn batch_continue_golden_three_lines_one_failure() {
         let options = FactorOptions::default();
         let token = CancellationToken::new();
-        let lines = vec!["15".to_string(), "abc".to_string(), "21".to_string()];
+        let reader = std::io::BufReader::new(std::io::Cursor::new("15\nabc\n21\n"));
         let mut records = Vec::new();
-        let completed = run_batch_lines(&lines, &options, &token, false, true, &mut |record| {
+        let completed = run_batch_lines(reader, &options, &token, false, true, &mut |record| {
             records.push(batch_record_value(record));
-        });
+        })
+        .expect("streaming batch reads");
         assert!(completed);
         assert_eq!(records.len(), 3);
         assert_eq!(records[0]["input"], "15");
@@ -788,17 +783,36 @@ mod tests {
     fn batch_aborts_on_first_failure_without_continue_flag() {
         let options = FactorOptions::default();
         let token = CancellationToken::new();
-        let lines = vec!["15".to_string(), "abc".to_string(), "21".to_string()];
+        let reader = std::io::BufReader::new(std::io::Cursor::new("15\nabc\n21\n"));
         let mut records = Vec::new();
-        let completed = run_batch_lines(&lines, &options, &token, false, false, &mut |record| {
+        let completed = run_batch_lines(reader, &options, &token, false, false, &mut |record| {
             records.push(batch_record_value(record));
-        });
+        })
+        .expect("streaming batch reads");
         assert!(!completed);
         assert_eq!(records.len(), 2);
         assert_eq!(records[0]["status"], "ok");
         assert_eq!(records[0]["factors"], serde_json::json!(["3", "5"]));
         assert_eq!(records[1]["status"], "error");
         assert!(records[1]["error"].is_string());
+    }
+
+    #[test]
+    fn batch_streaming_skips_blank_lines() {
+        let options = FactorOptions::default();
+        let token = CancellationToken::new();
+        let reader = std::io::BufReader::new(std::io::Cursor::new("15\n\n   \n21\n"));
+        let mut records = Vec::new();
+        let completed = run_batch_lines(reader, &options, &token, false, true, &mut |record| {
+            records.push(batch_record_value(record));
+        })
+        .expect("streaming batch reads");
+        assert!(completed);
+        assert_eq!(records.len(), 2);
+        assert_eq!(records[0]["input"], "15");
+        assert_eq!(records[0]["status"], "ok");
+        assert_eq!(records[1]["input"], "21");
+        assert_eq!(records[1]["status"], "ok");
     }
 
     #[test]
@@ -926,11 +940,12 @@ mod tests {
         let options = FactorOptions::default();
         let token = CancellationToken::new();
         token.cancel();
-        let lines = vec!["15".to_string(), "21".to_string(), "33".to_string()];
+        let reader = std::io::BufReader::new(std::io::Cursor::new("15\n21\n33\n"));
         let mut records = Vec::new();
-        let completed = run_batch_lines(&lines, &options, &token, false, true, &mut |record| {
+        let completed = run_batch_lines(reader, &options, &token, false, true, &mut |record| {
             records.push(batch_record_value(record));
-        });
+        })
+        .expect("streaming batch reads");
         assert!(!completed);
         assert_eq!(records.len(), 1);
     }
