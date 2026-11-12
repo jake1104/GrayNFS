@@ -1,6 +1,6 @@
-# GrayNFS · [![Version](https://img.shields.io/badge/version-v0.2.5-blue.svg)](CHANGELOG.md) [![License: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE.md) [![CI](https://github.com/jake1104/GrayNFS/actions/workflows/ci.yml/badge.svg)](https://github.com/jake1104/GrayNFS/actions/workflows/ci.yml) [![Python](https://img.shields.io/badge/python-3.8%2B-blue.svg)](python/graynfs/__init__.py)
+# GrayNFS · ![Version](https://img.shields.io/badge/version-v0.2.5-blue.svg) [![License: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE.md) [![CI](https://github.com/jake1104/GrayNFS/actions/workflows/ci.yml/badge.svg)](https://github.com/jake1104/GrayNFS/actions/workflows/ci.yml) [![Python](https://img.shields.io/badge/python-3.8%2B-blue.svg)](python/graynfs/__init__.py)
 
-Pure-Rust GNFS implementation (degrees 2-5) with trial division, Fermat, p-1/p+1, ECM front stages; the fastest verified answer wins.
+Integer-factorization engine with SIQS (degree 2) and GNFS (degrees 3-5), plus trial division, Fermat, p-1/p+1, ECM front stages; the fastest verified answer wins.
 
 - **Adaptive cascade:** trial division, perfect powers, Fermat, Pollard p-1, Williams p+1, Brent Rho, Lenstra ECM, SIQS at degree 2, GNFS at degrees 3-5. Measured cost picks the winner; the fastest correct answer wins.
 - **Verified output:** every reported factorization is product-checked before it is returned. A wrong answer is a hard failure, never a slow one.
@@ -537,9 +537,10 @@ console.log(factorize("600851475143", 5000));
 ```
 
 `budgetMs` is clamped to 1000–10000 ms. The wasm target has no threads, so the build
-runs the whole cascade on one worker with a 512 MiB memory budget and a fixed seed; small
+runs the whole cascade on one worker with a 512 MiB estimate-based soft guard (not an RSS hard limit) and a fixed seed; small
 and medium inputs resolve immediately, while larger ones end with a resource-limit
-result instead of hanging. `node scripts/wasm-smoke.mjs` checks the built package against
+result instead of hanging. A Web Worker example with cancel and diagnostics lives in
+`examples/wasm-demo/index.html` (see `worker.js`/`app.js`). `node scripts/wasm-smoke.mjs` checks the built package against
 `10403`, `600851475143` and a 105-bit input that must hit the time budget.
 
 ## Contributing
