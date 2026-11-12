@@ -147,9 +147,33 @@ for (const testCase of CASES) {
     console.log(`${testCase.name}: FAIL product ${productOf(factors).toString()}`);
     continue;
   }
-  if (typeof payload.elapsedMs !== "number" || payload.elapsedMs > testCase.budgetMs + 2000) {
+  const elapsedMs = payload.elapsedMs;
+  if (typeof elapsedMs !== "number" || !Number.isFinite(elapsedMs) || elapsedMs <= 0) {
     failed += 1;
     console.log(`${testCase.name}: FAIL elapsedMs ${String(payload.elapsedMs)}`);
+    continue;
+  }
+  if (elapsedMs > testCase.budgetMs + 2000) {
+    failed += 1;
+    console.log(`${testCase.name}: FAIL elapsedMs ${String(payload.elapsedMs)}`);
+    continue;
+  }
+  if (elapsedMs > wallMs + 2000) {
+    failed += 1;
+    console.log(`${testCase.name}: FAIL elapsedMs ${String(payload.elapsedMs)}`);
+    continue;
+  }
+  const badStage = stages.find(
+    (stage) =>
+      typeof stage.ms !== "number" ||
+      !Number.isFinite(stage.ms) ||
+      stage.ms < 0 ||
+      stage.ms > testCase.budgetMs + 2000 ||
+      stage.ms > wallMs + 2000,
+  );
+  if (badStage) {
+    failed += 1;
+    console.log(`${testCase.name}: FAIL stage-ms ${String(badStage.ms)}`);
     continue;
   }
   passed += 1;
