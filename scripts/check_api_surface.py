@@ -237,21 +237,18 @@ def check_repo(root):
 
     factor_params = init_defs.get("factor", [])
     batch_params = init_defs.get("factor_batch", [])
-    record(
-        "factor_batch kwargs match factor kwargs",
-        str(init_path),
+    batch_tail_ok = (
         bool(factor_params)
         and bool(batch_params)
         and batch_params[:2] == ["ns", "fail_fast"]
-        and batch_params[2:] == factor_params[1:],
-        "batch=%s factor=%s" % (batch_params, factor_params)
-        if not (
-            bool(factor_params)
-            and bool(batch_params)
-            and batch_params[:2] == ["ns", "fail_fast"]
-            and batch_params[2:] == factor_params[1:]
-        )
-        else "",
+        and batch_params[2:-1] == factor_params[1:]
+        and batch_params[-1:] == ["max_workers"]
+    )
+    record(
+        "factor_batch kwargs match factor kwargs",
+        str(init_path),
+        batch_tail_ok,
+        "batch=%s factor=%s" % (batch_params, factor_params) if not batch_tail_ok else "",
     )
 
     all_match = re.search(r"__all__\s*=\s*\[(.*?)\]", init_text, re.DOTALL)

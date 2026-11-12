@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import os
+from concurrent.futures import ThreadPoolExecutor
 from typing import Any, Callable, Optional
 
 from . import _graynfs
@@ -281,6 +283,36 @@ def version() -> str:
     return str(_graynfs.version())
 
 
+def _validate_max_workers(max_workers: int | None) -> int | None:
+    if max_workers is None:
+        return None
+    if isinstance(max_workers, bool) or not isinstance(max_workers, int):
+        raise TypeError("max_workers must be an integer or None")
+    if max_workers < 1:
+        raise ValueError("input: max_workers must be a positive integer")
+    return max_workers
+
+
+def _batch_slots(
+    *,
+    max_memory_mb: int | None,
+    rational_base_bound: int,
+    algebraic_base_bound: int,
+    sieve_a_bound: int,
+    per_job_threads: int,
+    max_workers: int,
+) -> int:
+    budget_bytes = (1024 if max_memory_mb is None else max_memory_mb) * 1024 * 1024
+    per_job_bytes = (rational_base_bound + algebraic_base_bound) * 64 + (
+        2 * sieve_a_bound + 1
+    ) * 68 * max(1, per_job_threads)
+    if per_job_bytes <= 0:
+        return max_workers
+    if per_job_bytes > budget_bytes:
+        return 1
+    return max(1, min(max_workers, budget_bytes // per_job_bytes))
+
+
 def factor_batch(
     ns: list[int],
     *,
@@ -306,8 +338,93 @@ def factor_batch(
     seed: int | None = None,
     max_cpu_seconds: int | None = None,
     use_snfs: bool = True,
+    max_workers: int | None = None,
 ) -> list[list[int] | GrayNFSError]:
-    """Factor each input in ns with the shared factor keywords; fail_fast=True raises on the first failure while False records the GrayNFSError in place."""
+    """Factor each input in ns with the shared factor keywords; fail_fast=True raises on the first failure while False records the GrayNFSError in place. max_workers=None (default) factors sequentially; an integer selects that many bounded parallel workers while preserving input order, dividing threads across jobs and queuing jobs so total memory stays within the memory budget."""
+    try:
+        resolved_workers = _validate_max_workers(max_workers)
+    except ValueError as exc:
+        raise _to_gray_error(exc)
+    if resolved_workers is None or resolved_workers == 1:
+        return _factor_batch_sequential(
+            ns,
+            fail_fast=fail_fast,
+            degree=degree,
+            rational_base_bound=rational_base_bound,
+            algebraic_base_bound=algebraic_base_bound,
+            sieve_a_bound=sieve_a_bound,
+            sieve_b_bound=sieve_b_bound,
+            timeout_seconds=timeout_seconds,
+            max_memory_mb=max_memory_mb,
+            allow_fallback=allow_fallback,
+            use_fermat=use_fermat,
+            use_pm1=use_pm1,
+            use_pp1=use_pp1,
+            use_ecm=use_ecm,
+            use_mpqs=use_mpqs,
+            threads=threads,
+            perf_mode=perf_mode,
+            skip_preprocessing=skip_preprocessing,
+            large_prime_bound=large_prime_bound,
+            enable_double_large_primes=enable_double_large_primes,
+            seed=seed,
+            max_cpu_seconds=max_cpu_seconds,
+            use_snfs=use_snfs,
+        )
+    return _factor_batch_parallel(
+        ns,
+        fail_fast=fail_fast,
+        degree=degree,
+        rational_base_bound=rational_base_bound,
+        algebraic_base_bound=algebraic_base_bound,
+        sieve_a_bound=sieve_a_bound,
+        sieve_b_bound=sieve_b_bound,
+        timeout_seconds=timeout_seconds,
+        max_memory_mb=max_memory_mb,
+        allow_fallback=allow_fallback,
+        use_fermat=use_fermat,
+        use_pm1=use_pm1,
+        use_pp1=use_pp1,
+        use_ecm=use_ecm,
+        use_mpqs=use_mpqs,
+        threads=threads,
+        perf_mode=perf_mode,
+        skip_preprocessing=skip_preprocessing,
+        large_prime_bound=large_prime_bound,
+        enable_double_large_primes=enable_double_large_primes,
+        seed=seed,
+        max_cpu_seconds=max_cpu_seconds,
+        use_snfs=use_snfs,
+        max_workers=resolved_workers,
+    )
+
+
+def _factor_batch_sequential(
+    ns: list[int],
+    *,
+    fail_fast: bool,
+    degree: int | None,
+    rational_base_bound: int,
+    algebraic_base_bound: int,
+    sieve_a_bound: int,
+    sieve_b_bound: int,
+    timeout_seconds: int | None,
+    max_memory_mb: int | None,
+    allow_fallback: bool,
+    use_fermat: bool,
+    use_pm1: bool,
+    use_pp1: bool,
+    use_ecm: bool,
+    use_mpqs: bool,
+    threads: int | None,
+    perf_mode: bool,
+    skip_preprocessing: bool,
+    large_prime_bound: int,
+    enable_double_large_primes: bool,
+    seed: int | None,
+    max_cpu_seconds: int | None,
+    use_snfs: bool,
+) -> list[list[int] | GrayNFSError]:
     results: list[list[int] | GrayNFSError] = []
     for value in ns:
         try:
@@ -342,6 +459,88 @@ def factor_batch(
                 raise
             results.append(exc)
     return results
+
+
+def _factor_batch_parallel(
+    ns: list[int],
+    *,
+    fail_fast: bool,
+    degree: int | None,
+    rational_base_bound: int,
+    algebraic_base_bound: int,
+    sieve_a_bound: int,
+    sieve_b_bound: int,
+    timeout_seconds: int | None,
+    max_memory_mb: int | None,
+    allow_fallback: bool,
+    use_fermat: bool,
+    use_pm1: bool,
+    use_pp1: bool,
+    use_ecm: bool,
+    use_mpqs: bool,
+    threads: int | None,
+    perf_mode: bool,
+    skip_preprocessing: bool,
+    large_prime_bound: int,
+    enable_double_large_primes: bool,
+    seed: int | None,
+    max_cpu_seconds: int | None,
+    use_snfs: bool,
+    max_workers: int,
+) -> list[list[int] | GrayNFSError]:
+    values = list(ns)
+    total_workers = threads if threads is not None else (os.cpu_count() or 1)
+    per_job_threads = max(1, total_workers // max_workers)
+    slots = _batch_slots(
+        max_memory_mb=max_memory_mb,
+        rational_base_bound=rational_base_bound,
+        algebraic_base_bound=algebraic_base_bound,
+        sieve_a_bound=sieve_a_bound,
+        per_job_threads=per_job_threads,
+        max_workers=max_workers,
+    )
+
+    def _run(value: int) -> list[int] | GrayNFSError:
+        try:
+            return factor(
+                value,
+                degree=degree,
+                rational_base_bound=rational_base_bound,
+                algebraic_base_bound=algebraic_base_bound,
+                sieve_a_bound=sieve_a_bound,
+                sieve_b_bound=sieve_b_bound,
+                timeout_seconds=timeout_seconds,
+                max_memory_mb=max_memory_mb,
+                allow_fallback=allow_fallback,
+                use_fermat=use_fermat,
+                use_pm1=use_pm1,
+                use_pp1=use_pp1,
+                use_ecm=use_ecm,
+                use_mpqs=use_mpqs,
+                threads=per_job_threads,
+                perf_mode=perf_mode,
+                skip_preprocessing=skip_preprocessing,
+                large_prime_bound=large_prime_bound,
+                enable_double_large_primes=enable_double_large_primes,
+                seed=seed,
+                max_cpu_seconds=max_cpu_seconds,
+                use_snfs=use_snfs,
+            )
+        except GrayNFSError as exc:
+            return exc
+
+    with ThreadPoolExecutor(max_workers=slots) as executor:
+        futures = [executor.submit(_run, value) for value in values]
+        results: list[list[int] | GrayNFSError] = []
+        for future in futures:
+            outcome = future.result()
+            if isinstance(outcome, GrayNFSError):
+                if fail_fast:
+                    raise outcome
+                results.append(outcome)
+            else:
+                results.append(outcome)
+        return results
 
 
 def factor_report(

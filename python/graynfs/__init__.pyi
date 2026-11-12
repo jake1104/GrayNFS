@@ -137,4 +137,5 @@ def factor_batch(
     seed: int | None = None,
     max_cpu_seconds: int | None = None,
     use_snfs: bool = True,
+    max_workers: int | None = None,
 ) -> list[list[int] | GrayNFSError]: ...

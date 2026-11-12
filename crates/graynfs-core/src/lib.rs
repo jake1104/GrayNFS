@@ -1,5 +1,6 @@
 pub mod algebraic;
 pub mod base;
+pub mod batch;
 pub mod cascade;
 pub mod cubic;
 pub mod ecm;

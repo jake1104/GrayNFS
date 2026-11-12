@@ -510,3 +510,60 @@ def test_factor_batch_fail_fast_true_raises_first() -> None:
         assert exc.category == "input"
     else:
         raise AssertionError("expected GrayNFSError")
+
+
+def test_factor_batch_max_workers_one_matches_sequential() -> None:
+    options: Any = {
+        "degree": 3,
+        "sieve_a_bound": 1600,
+        "sieve_b_bound": 700,
+    }
+    assert graynfs.factor_batch([15, 21, 100160063], max_workers=1, **options) == (
+        graynfs.factor_batch([15, 21, 100160063], **options)
+    )
+
+
+def test_factor_batch_max_workers_preserves_input_order() -> None:
+    parallel = graynfs.factor_batch(
+        [15, 0, 100160063, 21], fail_fast=False, max_workers=4
+    )
+    assert len(parallel) == 4
+    assert parallel[0] == [3, 5]
+    assert isinstance(parallel[1], graynfs.GrayNFSError)
+    assert parallel[1].category == "input"
+    assert parallel[2] == [10007, 10009]
+    assert parallel[3] == [3, 7]
+
+
+def test_factor_batch_max_workers_fail_fast_raises_first() -> None:
+    try:
+        graynfs.factor_batch([15, 0, 100160063], max_workers=4)
+    except graynfs.GrayNFSError as exc:
+        assert exc.category == "input"
+    else:
+        raise AssertionError("expected GrayNFSError")
+
+
+def test_factor_batch_max_workers_over_budget_queues() -> None:
+    sequential = graynfs.factor_batch([15, 21, 33], max_memory_mb=0)
+    parallel = graynfs.factor_batch(
+        [15, 21, 33], max_memory_mb=0, max_workers=4, threads=2
+    )
+    assert parallel == sequential == [[3, 5], [3, 7], [3, 11]]
+
+
+def test_factor_batch_max_workers_rejects_bad_values() -> None:
+    for bad in (0, -2):
+        try:
+            graynfs.factor_batch([15], max_workers=bad)
+        except graynfs.GrayNFSError as exc:
+            assert exc.category == "input"
+        else:
+            raise AssertionError("expected GrayNFSError for %r" % (bad,))
+    for bad in ("4", True, 2.5):
+        try:
+            graynfs.factor_batch([15], max_workers=bad)  # type: ignore[arg-type]
+        except TypeError:
+            pass
+        else:
+            raise AssertionError("expected TypeError for %r" % (bad,))

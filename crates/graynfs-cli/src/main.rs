@@ -1,11 +1,15 @@
 use clap::{CommandFactory, Parser, Subcommand};
+use graynfs_core::batch::{batch_job_options, batch_slots};
 use graynfs_core::{
     CancellationToken, FactorError, FactorOptions, FactorReport, ProgressEvent, StageTiming,
     factor_with_timings_cancelled, parse_decimal,
 };
+use std::collections::BTreeMap;
 use std::io::BufRead;
 use std::path::PathBuf;
 use std::process::ExitCode;
+use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
+use std::sync::{Arc, Mutex, mpsc};
 
 #[cfg(feature = "mimalloc")]
 #[global_allocator]
@@ -125,6 +129,12 @@ enum Commands {
             help = "Record per-line failures and keep going instead of aborting"
         )]
         continue_on_error: bool,
+        #[arg(
+            long,
+            default_value_t = 1,
+            help = "Batch worker count; records still emit in input order"
+        )]
+        jobs: usize,
     },
 }
 
@@ -161,8 +171,9 @@ fn main() -> ExitCode {
         Some(Commands::Batch {
             input,
             continue_on_error,
+            jobs,
             ..
-        }) => run_batch(&cli, input, *continue_on_error),
+        }) => run_batch(&cli, input, *continue_on_error, *jobs),
         None => run_single(&cli),
     }
 }
@@ -193,6 +204,19 @@ fn factor_batch_line(
     token: &CancellationToken,
     show_progress: bool,
 ) -> BatchRecord {
+    factor_batch_line_with_sink(raw, options, token, &|event| {
+        if show_progress {
+            eprintln!("{}", format_progress(event));
+        }
+    })
+}
+
+fn factor_batch_line_with_sink(
+    raw: &str,
+    options: &FactorOptions,
+    token: &CancellationToken,
+    on_progress: &(dyn Fn(&ProgressEvent) + Sync),
+) -> BatchRecord {
     let started = std::time::Instant::now();
     let number = match parse_decimal(raw) {
         Ok(value) => value,
@@ -212,9 +236,7 @@ fn factor_batch_line(
         if token.is_cancelled() {
             return Err(FactorError::Cancelled);
         }
-        if show_progress {
-            eprintln!("{}", format_progress(event));
-        }
+        on_progress(event);
         Ok(())
     });
     match result {
@@ -256,10 +278,7 @@ fn run_batch_lines(
         }
         let record = factor_batch_line(trimmed, options, token, show_progress);
         let failed = record.status == "error";
-        let cancelled = record
-            .error
-            .as_deref()
-            .is_some_and(|text| text.starts_with("cancelled"));
+        let cancelled = batch_record_is_cancelled(&record);
         emit(&record);
         if cancelled || (failed && !continue_on_error) {
             return Ok(false);
@@ -271,6 +290,164 @@ fn run_batch_lines(
     Ok(true)
 }
 
+fn batch_record_is_cancelled(record: &BatchRecord) -> bool {
+    record
+        .error
+        .as_deref()
+        .is_some_and(|text| text.starts_with("cancelled"))
+}
+
+fn run_batch_parallel(
+    reader: impl BufRead + Send,
+    options: &FactorOptions,
+    token: &CancellationToken,
+    show_progress: bool,
+    continue_on_error: bool,
+    jobs: usize,
+    emit: &mut dyn FnMut(&BatchRecord),
+) -> std::io::Result<bool> {
+    let workers = batch_slots(options, jobs).max(1);
+    let scoped = batch_job_options(options, jobs);
+    let (task_tx, task_rx) =
+        mpsc::sync_channel::<(usize, String)>(workers.saturating_mul(2).max(1));
+    let (result_tx, result_rx) = mpsc::channel::<(usize, BatchRecord)>();
+    let task_rx = Arc::new(Mutex::new(task_rx));
+    let stop = Arc::new(AtomicBool::new(false));
+    let dispatched = Arc::new(AtomicUsize::new(0));
+    let dispatcher_done = Arc::new(AtomicBool::new(false));
+    let io_error = Arc::new(Mutex::new(None::<String>));
+    let progress_lock = Arc::new(Mutex::new(()));
+    let mut completed = true;
+    std::thread::scope(|scope| {
+        {
+            let task_tx = task_tx;
+            let stop = Arc::clone(&stop);
+            let dispatched = Arc::clone(&dispatched);
+            let dispatcher_done = Arc::clone(&dispatcher_done);
+            let io_error = Arc::clone(&io_error);
+            scope.spawn(move || {
+                let mut lines = reader.lines();
+                let mut seq = 0usize;
+                'dispatch: loop {
+                    if stop.load(Ordering::SeqCst) {
+                        break;
+                    }
+                    let line = match lines.next() {
+                        None => break,
+                        Some(Ok(text)) => text,
+                        Some(Err(error)) => {
+                            if let Ok(mut slot) = io_error.lock() {
+                                *slot = Some(error.to_string());
+                            }
+                            break;
+                        }
+                    };
+                    let trimmed = line.trim().to_string();
+                    if trimmed.is_empty() {
+                        continue;
+                    }
+                    let mut pending = Some((seq, trimmed));
+                    seq = seq.saturating_add(1);
+                    while let Some(job) = pending.take() {
+                        if stop.load(Ordering::SeqCst) {
+                            break 'dispatch;
+                        }
+                        match task_tx.try_send(job) {
+                            Ok(()) => {
+                                dispatched.fetch_add(1, Ordering::SeqCst);
+                            }
+                            Err(mpsc::TrySendError::Full(job)) => {
+                                pending = Some(job);
+                                std::thread::sleep(std::time::Duration::from_millis(1));
+                            }
+                            Err(mpsc::TrySendError::Disconnected(_)) => {
+                                break 'dispatch;
+                            }
+                        }
+                    }
+                }
+                dispatcher_done.store(true, Ordering::SeqCst);
+            });
+        }
+        for _ in 0..workers {
+            let task_rx = Arc::clone(&task_rx);
+            let result_tx = result_tx.clone();
+            let scoped = scoped.clone();
+            let token = token.clone();
+            let progress_lock = Arc::clone(&progress_lock);
+            let stop = Arc::clone(&stop);
+            scope.spawn(move || {
+                while let Ok((seq, line)) = task_rx.lock().expect("batch task lock").recv() {
+                    if stop.load(Ordering::SeqCst) {
+                        continue;
+                    }
+                    let record = if show_progress {
+                        factor_batch_line_with_sink(&line, &scoped, &token, &|event| {
+                            if let Ok(_guard) = progress_lock.lock() {
+                                eprintln!("{}", format_progress(event));
+                            }
+                        })
+                    } else {
+                        factor_batch_line_with_sink(&line, &scoped, &token, &|_| {})
+                    };
+                    if result_tx.send((seq, record)).is_err() {
+                        break;
+                    }
+                }
+            });
+        }
+        drop(result_tx);
+        let mut pending: BTreeMap<usize, BatchRecord> = BTreeMap::new();
+        let mut next_seq = 0usize;
+        loop {
+            while let Some(record) = pending.remove(&next_seq) {
+                let failed = record.status == "error";
+                let cancelled = batch_record_is_cancelled(&record);
+                emit(&record);
+                next_seq = next_seq.saturating_add(1);
+                if cancelled || (failed && !continue_on_error) || token.is_cancelled() {
+                    completed = false;
+                    stop.store(true, Ordering::SeqCst);
+                    for _ in result_rx.iter() {}
+                    return;
+                }
+            }
+            if dispatcher_done.load(Ordering::SeqCst)
+                && next_seq >= dispatched.load(Ordering::SeqCst)
+                && pending.is_empty()
+            {
+                break;
+            }
+            match result_rx.recv() {
+                Ok((seq, record)) => {
+                    pending.insert(seq, record);
+                }
+                Err(_) => break,
+            }
+        }
+        while let Some(record) = pending.remove(&next_seq) {
+            let failed = record.status == "error";
+            let cancelled = batch_record_is_cancelled(&record);
+            emit(&record);
+            next_seq = next_seq.saturating_add(1);
+            if cancelled || (failed && !continue_on_error) || token.is_cancelled() {
+                completed = false;
+                stop.store(true, Ordering::SeqCst);
+                break;
+            }
+        }
+        if token.is_cancelled() {
+            completed = false;
+        }
+    });
+    if let Ok(slot) = io_error.lock()
+        && let Some(detail) = slot.as_ref()
+    {
+        return Err(std::io::Error::other(detail.clone()));
+    }
+    Ok(completed)
+}
+
 fn batch_exit_code(failed: bool, cancelled: bool) -> ExitCode {
     if failed || cancelled {
         ExitCode::FAILURE
@@ -279,7 +456,11 @@ fn batch_exit_code(failed: bool, cancelled: bool) -> ExitCode {
     }
 }
 
-fn run_batch(cli: &Cli, input: &PathBuf, continue_on_error: bool) -> ExitCode {
+fn run_batch(cli: &Cli, input: &PathBuf, continue_on_error: bool, jobs: usize) -> ExitCode {
+    if jobs == 0 {
+        eprintln!("error: input: --jobs must be at least one");
+        return ExitCode::FAILURE;
+    }
     let file = match std::fs::File::open(input) {
         Ok(handle) => handle,
         Err(error) => {
@@ -305,14 +486,27 @@ fn run_batch(cli: &Cli, input: &PathBuf, continue_on_error: bool) -> ExitCode {
         }
         print_json(&batch_record_value(record));
     };
-    if let Err(error) = run_batch_lines(
-        reader,
-        &options,
-        &token,
-        show_progress,
-        continue_on_error,
-        &mut emit,
-    ) {
+    let completed_ok = if jobs <= 1 {
+        run_batch_lines(
+            reader,
+            &options,
+            &token,
+            show_progress,
+            continue_on_error,
+            &mut emit,
+        )
+    } else {
+        run_batch_parallel(
+            reader,
+            &options,
+            &token,
+            show_progress,
+            continue_on_error,
+            jobs,
+            &mut emit,
+        )
+    };
+    if let Err(error) = completed_ok {
         eprintln!("error: io: cannot read batch line: {error}");
         return ExitCode::FAILURE;
     }
@@ -831,10 +1025,12 @@ mod tests {
                 input,
                 jsonl,
                 continue_on_error,
+                jobs,
             } => {
                 assert_eq!(input, PathBuf::from("numbers.txt"));
                 assert!(jsonl);
                 assert!(continue_on_error);
+                assert_eq!(jobs, 1);
             }
         }
         assert!(cli.number.is_none());
@@ -850,6 +1046,187 @@ mod tests {
                 assert!(!continue_on_error);
             }
         }
+    }
+
+    #[test]
+    fn cli_batch_jobs_flag_defaults_to_one_and_parses_explicit() {
+        let flagged =
+            Cli::try_parse_from(["graynfs", "batch", "--input", "numbers.txt", "--jobs", "4"])
+                .expect("parse batch with jobs");
+        match flagged.command.expect("batch command present") {
+            Commands::Batch { jobs, .. } => {
+                assert_eq!(jobs, 4);
+            }
+        }
+    }
+
+    #[test]
+    fn batch_jobs_zero_is_rejected_before_file_open() {
+        let cli = Cli::try_parse_from([
+            "graynfs",
+            "batch",
+            "--input",
+            "definitely-missing-numbers.txt",
+            "--jobs",
+            "0",
+        ])
+        .expect("parse batch with zero jobs");
+        match &cli.command {
+            Some(Commands::Batch {
+                input,
+                continue_on_error,
+                jobs,
+                ..
+            }) => {
+                assert_eq!(
+                    run_batch(&cli, input, *continue_on_error, *jobs),
+                    ExitCode::FAILURE
+                );
+            }
+            None => panic!("batch command present"),
+        }
+    }
+
+    #[test]
+    fn batch_parallel_jobs_one_matches_sequential() {
+        let options = FactorOptions::default();
+        let token = CancellationToken::new();
+        let input = "15\nabc\n21\n";
+        let mut sequential = Vec::new();
+        let reader = std::io::BufReader::new(std::io::Cursor::new(input));
+        let done_seq = run_batch_lines(reader, &options, &token, false, true, &mut |record| {
+            sequential.push(batch_record_value(record));
+        })
+        .expect("sequential batch reads");
+        let mut parallel = Vec::new();
+        let reader = std::io::BufReader::new(std::io::Cursor::new(input));
+        let done_par =
+            run_batch_parallel(reader, &options, &token, false, true, 1, &mut |record| {
+                parallel.push(batch_record_value(record));
+            })
+            .expect("parallel batch reads");
+        assert_eq!(done_seq, done_par);
+        assert_eq!(sequential.len(), parallel.len());
+        assert_eq!(sequential.len(), 3);
+        for (left, right) in sequential.iter().zip(parallel.iter()) {
+            assert_eq!(left["input"], right["input"]);
+            assert_eq!(left["status"], right["status"]);
+            assert_eq!(left["factors"], right["factors"]);
+            assert_eq!(left["method"], right["method"]);
+            assert_eq!(left["error"], right["error"]);
+        }
+    }
+
+    #[test]
+    fn batch_parallel_preserves_input_order() {
+        let options = FactorOptions::default();
+        let token = CancellationToken::new();
+        let lines = ["91", "abc", "15", "21", "33", "35", "39", "49", "77"];
+        let input = lines.join("\n") + "\n";
+        let mut records = Vec::new();
+        let done = run_batch_parallel(
+            std::io::BufReader::new(std::io::Cursor::new(input)),
+            &options,
+            &token,
+            false,
+            true,
+            4,
+            &mut |record| {
+                records.push(batch_record_value(record));
+            },
+        )
+        .expect("parallel batch reads");
+        assert!(done);
+        assert_eq!(records.len(), lines.len());
+        for (record, expected) in records.iter().zip(lines.iter()) {
+            assert_eq!(record["input"], *expected);
+        }
+        assert_eq!(records[2]["factors"], serde_json::json!(["3", "5"]));
+        assert_eq!(records[1]["status"], "error");
+        assert!(records[1]["error"].is_string());
+    }
+
+    #[test]
+    fn batch_parallel_aborts_on_first_failure_without_continue_flag() {
+        let options = FactorOptions::default();
+        let token = CancellationToken::new();
+        let mut records = Vec::new();
+        let done = run_batch_parallel(
+            std::io::BufReader::new(std::io::Cursor::new("15\nabc\n21\n")),
+            &options,
+            &token,
+            false,
+            false,
+            4,
+            &mut |record| {
+                records.push(batch_record_value(record));
+            },
+        )
+        .expect("parallel batch reads");
+        assert!(!done);
+        assert_eq!(records.len(), 2);
+        assert_eq!(records[0]["status"], "ok");
+        assert_eq!(records[0]["factors"], serde_json::json!(["3", "5"]));
+        assert_eq!(records[1]["status"], "error");
+    }
+
+    #[test]
+    fn batch_parallel_over_budget_queues_instead_of_aborting() {
+        let options = FactorOptions {
+            threads: Some(2),
+            max_memory_mb: Some(0),
+            ..FactorOptions::default()
+        };
+        assert_eq!(batch_slots(&options, 4), 1);
+        let token = CancellationToken::new();
+        let mut records = Vec::new();
+        let done = run_batch_parallel(
+            std::io::BufReader::new(std::io::Cursor::new("15\n21\n33\n")),
+            &options,
+            &token,
+            false,
+            true,
+            4,
+            &mut |record| {
+                records.push(batch_record_value(record));
+            },
+        )
+        .expect("queued batch reads");
+        assert!(done);
+        assert_eq!(records.len(), 3);
+        assert_eq!(records[0]["input"], "15");
+        assert_eq!(records[0]["status"], "ok");
+        assert_eq!(records[0]["factors"], serde_json::json!(["3", "5"]));
+        assert_eq!(records[1]["factors"], serde_json::json!(["3", "7"]));
+        assert_eq!(records[2]["factors"], serde_json::json!(["3", "11"]));
+    }
+
+    #[test]
+    fn batch_parallel_precancelled_token_aborts_after_first_record() {
+        let options = FactorOptions::default();
+        let token = CancellationToken::new();
+        token.cancel();
+        let mut records = Vec::new();
+        let done = run_batch_parallel(
+            std::io::BufReader::new(std::io::Cursor::new("15\n21\n33\n")),
+            &options,
+            &token,
+            false,
+            true,
+            4,
+            &mut |record| {
+                records.push(batch_record_value(record));
+            },
+        )
+        .expect("parallel batch reads");
+        assert!(!done);
+        assert_eq!(records.len(), 1);
+        assert_eq!(records[0]["status"], "error");
+        assert!(
+            records[0]["error"]
+                .as_str()
+                .is_some_and(|text| text.starts_with("cancelled"))
+        );
     }
 
     #[test]
