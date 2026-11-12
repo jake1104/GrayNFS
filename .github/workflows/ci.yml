@@ -89,3 +89,21 @@ jobs:
         run: |
           cargo build -p graynfs-cli --release
           python scripts/perf_smoke.py
+  wasm-build-smoke:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: wasm32-unknown-unknown
+      - uses: Swatinem/rust-cache@v2
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+      - uses: jetli/wasm-pack-action@v2
+      - name: wasm-check
+        run: cargo check -p graynfs-core --target wasm32-unknown-unknown
+      - name: wasm-pack-build
+        run: wasm-pack build crates/graynfs-wasm --target web --release --out-dir pkg
+      - name: wasm-smoke
+        run: node scripts/wasm-smoke.mjs

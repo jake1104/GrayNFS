@@ -2,7 +2,8 @@
 
 Compares the canonical workspace version against every user-visible copy.
 Canonical source: root Cargo.toml [workspace.package] version.
-Checked copies: pyproject.toml, README badge/wheel/example, test assertion.
+Checked copies: pyproject.toml, README badge/wheel/example, test assertion,
+crates/graynfs-wasm/Cargo.toml (pinned via version.workspace inheritance).
 
 Deliberately ignored: CHANGELOG history, Cargo.lock dependency versions,
 task IDs like 2026.10.10.1.x, README v0.1.1/v0.1.0 history sections.
@@ -44,6 +45,7 @@ def check_repo(root):
     pyproject_path = root / "pyproject.toml"
     readme_path = root / "README.md"
     test_path = root / "python" / "tests" / "test_basic.py"
+    wasm_cargo_path = root / "crates" / "graynfs-wasm" / "Cargo.toml"
 
     results = []
 
@@ -143,6 +145,24 @@ def check_repo(root):
         "test_basic.py version assertion",
         "%s (graynfs.version() ==)" % test_path,
         assertion.group(1) if assertion else None,
+        cargo_version,
+    )
+
+    try:
+        wasm_cargo_text = read_text(wasm_cargo_path)
+    except OSError as exc:
+        print("MISMATCH: cannot read %s: %s" % (wasm_cargo_path, exc))
+        return 1
+    if re.search(r"^\s*version\.workspace\s*=\s*true", wasm_cargo_text, re.MULTILINE):
+        wasm_version = cargo_version
+        wasm_why = "version.workspace = true"
+    else:
+        wasm_version = extract_section_version(wasm_cargo_text, "package")
+        wasm_why = "explicit [package] version"
+    record(
+        "graynfs-wasm crate version (%s)" % wasm_why,
+        str(wasm_cargo_path),
+        wasm_version,
         cargo_version,
     )
 

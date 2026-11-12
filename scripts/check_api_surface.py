@@ -10,6 +10,8 @@ Compares the live signatures against their checked-in copies:
   (one direction only: every documented flag must exist in the CLI;
   CLI-only flags such as --progress are reported, never failures).
 - __all__ carries factor_batch.
+- crates/graynfs-wasm/src/lib.rs #[wasm_bindgen] exports:
+  factorize(decimal: &str, budget_ms: u32) -> String and version() -> String.
 
 Deliberately narrow: parameter names and flag presence only, never types,
 defaults, or behavior. Exit 0 when all checks pass, else exit 1.
@@ -169,6 +171,7 @@ def check_repo(root):
     init_stub_path = root / "python" / "graynfs" / "__init__.pyi"
     cli_path = root / "crates" / "graynfs-cli" / "src" / "main.rs"
     readme_path = root / "README.md"
+    wasm_lib_path = root / "crates" / "graynfs-wasm" / "src" / "lib.rs"
 
     results = []
 
@@ -182,6 +185,7 @@ def check_repo(root):
         init_stub_text = read_text(init_stub_path)
         cli_text = read_text(cli_path)
         readme_text = read_text(readme_path)
+        wasm_lib_text = read_text(wasm_lib_path)
     except OSError as exc:
         print("MISMATCH: cannot read input: %s" % exc)
         return 1
@@ -285,6 +289,32 @@ def check_repo(root):
     )
     only_cli = sorted(cli_flags - readme_flags)
     print("NOTE: CLI-only flags (prose-covered, table-optional): %s" % only_cli)
+
+    wasm_factorize = re.search(
+        r"#\[wasm_bindgen\]\s*\n\s*pub fn factorize\(\s*decimal\s*:\s*&str\s*,\s*budget_ms\s*:\s*u32\s*\)\s*->\s*String",
+        wasm_lib_text,
+    )
+    record(
+        "wasm factorize(decimal, budget_ms) export",
+        str(wasm_lib_path),
+        wasm_factorize is not None,
+        "export signature not found" if wasm_factorize is None else "",
+    )
+    wasm_version = re.search(
+        r"#\[wasm_bindgen\]\s*\n\s*pub fn version\(\s*\)\s*->\s*String",
+        wasm_lib_text,
+    )
+    record(
+        "wasm version() export",
+        str(wasm_lib_path),
+        wasm_version is not None,
+        "export signature not found" if wasm_version is None else "",
+    )
+    print(
+        "NOTE: generated crates/graynfs-wasm/pkg glue (.js/.d.ts/.wasm) "
+        "deliberately not pinned: gitignored build artifacts regenerated "
+        "by wasm-pack on every wasm-build-smoke run."
+    )
 
     failures = [entry for entry in results if not entry["ok"]]
     for entry in results:
