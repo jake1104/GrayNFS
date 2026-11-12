@@ -1,4 +1,5 @@
 use std::collections::{HashMap, HashSet, VecDeque};
+use std::path::Path;
 use std::sync::Mutex;
 use std::sync::atomic::{AtomicBool, Ordering};
 
@@ -30,12 +31,12 @@ fn residue_mod(value: &Integer, prime: u64) -> u64 {
 }
 
 #[derive(Clone, Debug)]
-struct GeneralRelation {
-    rational_value: Integer,
-    algebraic_value: Element,
-    mask: Vec<u64>,
-    large_prime: Option<(u64, u64)>,
-    double_edge: Option<[(u64, u64); 2]>,
+pub(crate) struct GeneralRelation {
+    pub(crate) rational_value: Integer,
+    pub(crate) algebraic_value: Element,
+    pub(crate) mask: Vec<u64>,
+    pub(crate) large_prime: Option<(u64, u64)>,
+    pub(crate) double_edge: Option<[(u64, u64); 2]>,
 }
 
 impl Masked for GeneralRelation {
@@ -49,8 +50,8 @@ struct ClassifiedNorm {
     large_primes: Vec<(u64, u64)>,
 }
 
-struct LargePrimeCollector {
-    pending: HashMap<(u64, u64), usize>,
+pub(crate) struct LargePrimeCollector {
+    pub(crate) pending: HashMap<(u64, u64), usize>,
 }
 
 impl LargePrimeCollector {
@@ -71,24 +72,24 @@ impl LargePrimeCollector {
     }
 }
 
-struct PartialBank {
-    singles: Vec<GeneralRelation>,
-    single_sources: Vec<(i64, i64)>,
-    single_aux: Vec<u64>,
-    single_lps: Vec<Vec<(u64, u64)>>,
-    collector: LargePrimeCollector,
-    rat_pending: HashMap<u64, usize>,
-    mixed_pending: HashMap<((u64, u64), u64), usize>,
-    triad_pending: HashMap<(Vec<(u64, u64)>, u64), usize>,
-    doubles: Vec<GeneralRelation>,
-    double_sources: Vec<(i64, i64)>,
-    double_aux: Vec<u64>,
-    double_parent: HashMap<(u64, u64), (u64, u64)>,
-    double_members: HashMap<(u64, u64), Vec<usize>>,
+pub(crate) struct PartialBank {
+    pub(crate) singles: Vec<GeneralRelation>,
+    pub(crate) single_sources: Vec<(i64, i64)>,
+    pub(crate) single_aux: Vec<u64>,
+    pub(crate) single_lps: Vec<Vec<(u64, u64)>>,
+    pub(crate) collector: LargePrimeCollector,
+    pub(crate) rat_pending: HashMap<u64, usize>,
+    pub(crate) mixed_pending: HashMap<((u64, u64), u64), usize>,
+    pub(crate) triad_pending: HashMap<(Vec<(u64, u64)>, u64), usize>,
+    pub(crate) doubles: Vec<GeneralRelation>,
+    pub(crate) double_sources: Vec<(i64, i64)>,
+    pub(crate) double_aux: Vec<u64>,
+    pub(crate) double_parent: HashMap<(u64, u64), (u64, u64)>,
+    pub(crate) double_members: HashMap<(u64, u64), Vec<usize>>,
 }
 
 impl PartialBank {
-    fn new() -> Self {
+    pub(crate) fn new() -> Self {
         Self {
             singles: Vec::new(),
             single_sources: Vec::new(),
@@ -232,18 +233,18 @@ fn double_cycle_path(
 }
 
 #[derive(Clone, Debug)]
-struct GeneralBase {
-    rational_primes: Vec<u64>,
-    rational_indices: HashMap<u64, usize>,
-    algebraic_roots: Vec<(u64, u64, usize)>,
-    algebraic_index: HashMap<u64, Vec<(u64, usize)>>,
-    modulus_primes: Vec<u64>,
-    discriminant: Integer,
-    algebraic_bound: u64,
-    large_prime_bound: u64,
-    large_prime_roots: HashMap<u64, Vec<u64>>,
-    sign_column: usize,
-    lp_columns: usize,
+pub(crate) struct GeneralBase {
+    pub(crate) rational_primes: Vec<u64>,
+    pub(crate) rational_indices: HashMap<u64, usize>,
+    pub(crate) algebraic_roots: Vec<(u64, u64, usize)>,
+    pub(crate) algebraic_index: HashMap<u64, Vec<(u64, usize)>>,
+    pub(crate) modulus_primes: Vec<u64>,
+    pub(crate) discriminant: Integer,
+    pub(crate) algebraic_bound: u64,
+    pub(crate) large_prime_bound: u64,
+    pub(crate) large_prime_roots: HashMap<u64, Vec<u64>>,
+    pub(crate) sign_column: usize,
+    pub(crate) lp_columns: usize,
 }
 
 impl GeneralBase {
@@ -687,6 +688,20 @@ pub(crate) fn gnfs_divisor_with_polynomial(
     };
     let bound = unit_search_bound(field.degree);
     let mut units: Option<Vec<Element>> = None;
+    let resume = match options.resume_path.as_ref() {
+        Some(path) => {
+            let payload = crate::checkpoint::load_gnfs_checkpoint(path)?;
+            Some(crate::checkpoint::validate_and_restore(
+                &payload,
+                n,
+                degree,
+                options,
+                &polynomial,
+                &base,
+            )?)
+        }
+        None => None,
+    };
     let (relations, mut bank): (Vec<GeneralRelation>, PartialBank) = {
         let timer = Timer::new(Some(collector), "relation_collection", Some(degree));
         let (complete, bank) = collect_relations(
@@ -699,6 +714,8 @@ pub(crate) fn gnfs_divisor_with_polynomial(
             deadline,
             collector,
             degree,
+            resume,
+            options.checkpoint_path.as_deref(),
         )?;
         let value: Vec<GeneralRelation> = complete
             .into_iter()
@@ -1227,6 +1244,44 @@ pub(crate) fn live_budget_exceeded(
 }
 
 #[allow(clippy::too_many_arguments)]
+fn store_collect_checkpoint(
+    path: Option<&Path>,
+    n: &Integer,
+    degree: usize,
+    options: &FactorOptions,
+    polynomial: &PolynomialPair,
+    base: &GeneralBase,
+    complete: &[GeneralRelation],
+    bank: &PartialBank,
+    consumed: &HashSet<(i64, i64)>,
+    attempt_a: i64,
+    attempt_b: i64,
+    passes_done: usize,
+    usable_total: usize,
+    finished: bool,
+) -> Result<(), FactorError> {
+    if let Some(path) = path {
+        let payload = crate::checkpoint::payload_from_state(
+            n,
+            degree,
+            options,
+            polynomial,
+            base,
+            complete,
+            bank,
+            consumed,
+            attempt_a,
+            attempt_b,
+            passes_done,
+            usable_total,
+            finished,
+        );
+        crate::checkpoint::save_gnfs_checkpoint(path, &payload)?;
+    }
+    Ok(())
+}
+
+#[allow(clippy::too_many_arguments)]
 fn collect_relations(
     n: &Integer,
     polynomial: &PolynomialPair,
@@ -1237,6 +1292,8 @@ fn collect_relations(
     deadline: Option<Instant>,
     collector: &TimingCollector,
     degree: usize,
+    resume: Option<crate::checkpoint::CollectResume>,
+    checkpoint_path: Option<&Path>,
 ) -> Result<(Vec<GeneralRelation>, PartialBank), FactorError> {
     let max_a = i64::try_from(options.sieve_a_bound)
         .map_err(|_| FactorError::InvalidInput("sieve a bound is too large".to_string()))?;
@@ -1279,97 +1336,149 @@ fn collect_relations(
     let mut attempt_a = max_a;
     let mut attempt_b = max_b;
     let mut usable_total = 0_usize;
-    for _ in 0..5 {
-        let pass_started = Instant::now();
-        let rational_scores = build_rational_scores(context.base, attempt_a);
-        let rational_masks = RationalMasks::build(context.base, attempt_a);
-        context.max_a = attempt_a;
-        context.max_b = attempt_b;
-        complete.extend(scan_pass(
-            &mut context,
-            &sieve_roots,
-            &rational_scores,
-            &rational_masks,
-            options,
-            cancelled,
-            deadline,
-            true,
-            usable_total,
-            &mut consumed,
-            &mut bank,
-        )?);
-        usable_total = complete
-            .iter()
-            .filter(|relation| relation.mask.iter().any(|word| *word != 0))
-            .count();
-        let pass_gate = live_budget_exceeded(
-            options,
-            context.base.column_count(),
-            complete.len(),
-            bank.singles.len(),
-            bank.doubles.len(),
-        );
-        crate::factor::record_memory_shadow(
-            Some(collector),
-            "general-collect-pass",
-            Some(degree),
-            context.base.column_count(),
-            complete.len(),
-            bank.singles.len(),
-            bank.doubles.len(),
-            attempt_a,
-            workers,
-            options.memory_budget_bytes(),
-            pass_gate.is_none(),
-        );
-        if let Some(error) = pass_gate {
-            return Err(error);
-        }
-        collector.add_cpu_ms(pass_started.elapsed().as_millis(), workers);
-        collector.check_cpu_budget(options)?;
-        collector.record_elapsed(
-            "collect",
-            Some(degree),
-            pass_started.elapsed().as_millis(),
-            format!(
-                "sieve_pass={} columns={} target={} usable={}",
-                complete.len(),
-                context.base.column_count(),
-                target_relations(context.base.column_count()),
-                usable_total
-            ),
-        );
-        if usable_total >= target_relations(context.base.column_count()) {
-            break;
-        }
-        let next_a = (attempt_a as usize)
-            .saturating_mul(2)
-            .min(COLLECT_SIEVE_A_CAP) as i64;
-        let next_b = (attempt_b as usize)
-            .saturating_mul(2)
-            .min(COLLECT_SIEVE_B_CAP) as i64;
-        if next_a == attempt_a && next_b == attempt_b {
-            break;
-        }
-        attempt_a = next_a;
-        attempt_b = next_b;
+    let mut start_pass = 0_usize;
+    let mut resumed_finished = false;
+    if let Some(state) = resume {
+        consumed = state.consumed;
+        bank = state.bank;
+        complete = state.complete;
+        attempt_a = state.attempt_a;
+        attempt_b = state.attempt_b;
+        usable_total = state.usable_total;
+        start_pass = state.passes_done;
+        resumed_finished = state.finished;
     }
-    if complete.len() < 64 {
-        let rational_scores = build_rational_scores(context.base, context.max_a);
-        let rational_masks = RationalMasks::build(context.base, context.max_a);
-        complete.extend(scan_pass(
-            &mut context,
-            &sieve_roots,
-            &rational_scores,
-            &rational_masks,
+    let mut done_passes = start_pass;
+    if !resumed_finished {
+        for pass in start_pass..5 {
+            done_passes = pass + 1;
+            let pass_started = Instant::now();
+            let rational_scores = build_rational_scores(context.base, attempt_a);
+            let rational_masks = RationalMasks::build(context.base, attempt_a);
+            context.max_a = attempt_a;
+            context.max_b = attempt_b;
+            complete.extend(scan_pass(
+                &mut context,
+                &sieve_roots,
+                &rational_scores,
+                &rational_masks,
+                options,
+                cancelled,
+                deadline,
+                true,
+                usable_total,
+                &mut consumed,
+                &mut bank,
+            )?);
+            usable_total = complete
+                .iter()
+                .filter(|relation| relation.mask.iter().any(|word| *word != 0))
+                .count();
+            let pass_gate = live_budget_exceeded(
+                options,
+                context.base.column_count(),
+                complete.len(),
+                bank.singles.len(),
+                bank.doubles.len(),
+            );
+            crate::factor::record_memory_shadow(
+                Some(collector),
+                "general-collect-pass",
+                Some(degree),
+                context.base.column_count(),
+                complete.len(),
+                bank.singles.len(),
+                bank.doubles.len(),
+                attempt_a,
+                workers,
+                options.memory_budget_bytes(),
+                pass_gate.is_none(),
+            );
+            if let Some(error) = pass_gate {
+                return Err(error);
+            }
+            collector.add_cpu_ms(pass_started.elapsed().as_millis(), workers);
+            collector.check_cpu_budget(options)?;
+            collector.record_elapsed(
+                "collect",
+                Some(degree),
+                pass_started.elapsed().as_millis(),
+                format!(
+                    "sieve_pass={} columns={} target={} usable={}",
+                    complete.len(),
+                    context.base.column_count(),
+                    target_relations(context.base.column_count()),
+                    usable_total
+                ),
+            );
+            if usable_total >= target_relations(context.base.column_count()) {
+                break;
+            }
+            let next_a = (attempt_a as usize)
+                .saturating_mul(2)
+                .min(COLLECT_SIEVE_A_CAP) as i64;
+            let next_b = (attempt_b as usize)
+                .saturating_mul(2)
+                .min(COLLECT_SIEVE_B_CAP) as i64;
+            if next_a == attempt_a && next_b == attempt_b {
+                break;
+            }
+            attempt_a = next_a;
+            attempt_b = next_b;
+            store_collect_checkpoint(
+                checkpoint_path,
+                n,
+                degree,
+                options,
+                polynomial,
+                context.base,
+                &complete,
+                &bank,
+                &consumed,
+                attempt_a,
+                attempt_b,
+                pass + 1,
+                usable_total,
+                false,
+            )?;
+        }
+        if complete.len() < 64 {
+            let rational_scores = build_rational_scores(context.base, context.max_a);
+            let rational_masks = RationalMasks::build(context.base, context.max_a);
+            complete.extend(scan_pass(
+                &mut context,
+                &sieve_roots,
+                &rational_scores,
+                &rational_masks,
+                options,
+                cancelled,
+                deadline,
+                false,
+                usable_total,
+                &mut consumed,
+                &mut bank,
+            )?);
+            usable_total = complete
+                .iter()
+                .filter(|relation| relation.mask.iter().any(|word| *word != 0))
+                .count();
+        }
+        store_collect_checkpoint(
+            checkpoint_path,
+            n,
+            degree,
             options,
-            cancelled,
-            deadline,
-            false,
+            polynomial,
+            context.base,
+            &complete,
+            &bank,
+            &consumed,
+            attempt_a,
+            attempt_b,
+            done_passes,
             usable_total,
-            &mut consumed,
-            &mut bank,
-        )?);
+            true,
+        )?;
     }
     base.large_prime_roots = lp_cache.into_inner().unwrap_or_default();
     let words = base.mask_words();
@@ -4359,5 +4468,259 @@ mod tests {
             }
         }
         assert!(weights.iter().all(|weight| *weight == 0 || *weight >= 3));
+    }
+
+    fn checkpoint_test_options() -> FactorOptions {
+        FactorOptions {
+            degree: Some(3),
+            skip_preprocessing: true,
+            threads: Some(1),
+            sieve_a_bound: 64,
+            sieve_b_bound: 16,
+            rational_base_bound: 200,
+            algebraic_base_bound: 200,
+            large_prime_bound: 5000,
+            seed: 7,
+            ..FactorOptions::default()
+        }
+    }
+
+    fn checkpoint_test_state(
+        options: &FactorOptions,
+    ) -> (Integer, PolynomialPair, NumberField, GeneralBase) {
+        let n: Integer = "100160063".parse().expect("valid integer");
+        let polynomial =
+            select_polynomial(&n, 3, options.polynomial_candidates).expect("cubic polynomial");
+        let field =
+            NumberField::new(3, polynomial.coefficients.clone()).expect("cubic field exists");
+        let base = GeneralBase::build(
+            &polynomial,
+            &n,
+            options.rational_base_bound,
+            options.algebraic_base_bound,
+            options.large_prime_bound,
+        )
+        .expect("factor base builds");
+        (n, polynomial, field, base)
+    }
+
+    fn assert_same_collected(left: &[GeneralRelation], right: &[GeneralRelation]) {
+        assert_eq!(left.len(), right.len());
+        for (first, second) in left.iter().zip(right.iter()) {
+            assert_eq!(first.rational_value, second.rational_value);
+            assert_eq!(
+                first.algebraic_value.coefficients,
+                second.algebraic_value.coefficients
+            );
+            assert_eq!(first.mask, second.mask);
+            assert_eq!(first.large_prime, second.large_prime);
+            assert_eq!(first.double_edge, second.double_edge);
+        }
+    }
+
+    fn assert_same_bank(left: &PartialBank, right: &PartialBank) {
+        assert_same_collected(&left.singles, &right.singles);
+        assert_same_collected(&left.doubles, &right.doubles);
+        assert_eq!(left.single_sources, right.single_sources);
+        assert_eq!(left.single_aux, right.single_aux);
+        assert_eq!(left.single_lps, right.single_lps);
+        assert_eq!(left.double_sources, right.double_sources);
+        assert_eq!(left.double_aux, right.double_aux);
+        assert_eq!(left.collector.pending, right.collector.pending);
+        assert_eq!(left.rat_pending, right.rat_pending);
+        assert_eq!(left.mixed_pending, right.mixed_pending);
+        assert_eq!(left.triad_pending, right.triad_pending);
+        assert_eq!(left.double_parent, right.double_parent);
+        assert_eq!(left.double_members, right.double_members);
+    }
+
+    fn checkpoint_temp_path(name: &str) -> std::path::PathBuf {
+        let mut path = std::env::temp_dir();
+        path.push(format!(
+            "graynfs-collect-{name}-{}-{}.json",
+            std::process::id(),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .map(|span| span.as_nanos())
+                .unwrap_or(0)
+        ));
+        path
+    }
+
+    #[test]
+    fn checkpoint_resume_reproduces_uninterrupted_collection() {
+        let options = checkpoint_test_options();
+        let cancelled = AtomicBool::new(false);
+        let collector = TimingCollector::default();
+        let (n, polynomial, field, mut base_full) = checkpoint_test_state(&options);
+        let (complete_full, bank_full) = collect_relations(
+            &n,
+            &polynomial,
+            &field,
+            &mut base_full,
+            &options,
+            &cancelled,
+            None,
+            &collector,
+            3,
+            None,
+            None,
+        )
+        .expect("uninterrupted collection succeeds");
+        assert!(!complete_full.is_empty());
+        let base_partial = GeneralBase::build(
+            &polynomial,
+            &n,
+            options.rational_base_bound,
+            options.algebraic_base_bound,
+            options.large_prime_bound,
+        )
+        .expect("partial factor base builds");
+        let lp_cache = Mutex::new(HashMap::new());
+        let sieve_roots = base_partial.sieve_roots(&polynomial.m);
+        let rational_scores = build_rational_scores(&base_partial, 64);
+        let rational_masks = RationalMasks::build(&base_partial, 64);
+        let mut context = ScanContext {
+            n: &n,
+            polynomial: &polynomial,
+            field: &field,
+            base: &base_partial,
+            lp_cache: &lp_cache,
+            max_a: 64,
+            max_b: 16,
+            allow_double: options.enable_double_large_primes,
+        };
+        let mut consumed_partial = HashSet::new();
+        let mut bank_partial = PartialBank::new();
+        let complete_partial = scan_pass(
+            &mut context,
+            &sieve_roots,
+            &rational_scores,
+            &rational_masks,
+            &options,
+            &cancelled,
+            None,
+            true,
+            0,
+            &mut consumed_partial,
+            &mut bank_partial,
+        )
+        .expect("partial pass succeeds");
+        let usable_partial = complete_partial
+            .iter()
+            .filter(|relation| relation.mask.iter().any(|word| *word != 0))
+            .count();
+        let partial_path = checkpoint_temp_path("partial");
+        let partial_payload = crate::checkpoint::payload_from_state(
+            &n,
+            3,
+            &options,
+            &polynomial,
+            &base_partial,
+            &complete_partial,
+            &bank_partial,
+            &consumed_partial,
+            128,
+            32,
+            1,
+            usable_partial,
+            false,
+        );
+        crate::checkpoint::save_gnfs_checkpoint(&partial_path, &partial_payload)
+            .expect("partial save succeeds");
+        let loaded_partial =
+            crate::checkpoint::load_gnfs_checkpoint(&partial_path).expect("partial load succeeds");
+        assert!(!loaded_partial.is_finished());
+        let mut base_resume = GeneralBase::build(
+            &polynomial,
+            &n,
+            options.rational_base_bound,
+            options.algebraic_base_bound,
+            options.large_prime_bound,
+        )
+        .expect("resume factor base builds");
+        let resume = crate::checkpoint::validate_and_restore(
+            &loaded_partial,
+            &n,
+            3,
+            &options,
+            &polynomial,
+            &base_resume,
+        )
+        .expect("partial resume validates");
+        let (complete_resumed, bank_resumed) = collect_relations(
+            &n,
+            &polynomial,
+            &field,
+            &mut base_resume,
+            &options,
+            &cancelled,
+            None,
+            &collector,
+            3,
+            Some(resume),
+            None,
+        )
+        .expect("resumed collection succeeds");
+        assert_same_collected(&complete_resumed, &complete_full);
+        assert_same_bank(&bank_resumed, &bank_full);
+        let _ = std::fs::remove_file(&partial_path);
+        let finished_path = checkpoint_temp_path("finished");
+        let (n_saved, polynomial_saved, field_saved, mut base_saved) =
+            checkpoint_test_state(&options);
+        assert_eq!(n_saved, n);
+        assert_eq!(polynomial_saved.coefficients, polynomial.coefficients);
+        let (complete_saved, _) = collect_relations(
+            &n_saved,
+            &polynomial_saved,
+            &field_saved,
+            &mut base_saved,
+            &options,
+            &cancelled,
+            None,
+            &collector,
+            3,
+            None,
+            Some(finished_path.as_path()),
+        )
+        .expect("checkpointed collection succeeds");
+        assert_same_collected(&complete_saved, &complete_full);
+        let loaded_finished = crate::checkpoint::load_gnfs_checkpoint(&finished_path)
+            .expect("finished load succeeds");
+        assert!(loaded_finished.is_finished());
+        let mut base_skip = GeneralBase::build(
+            &polynomial,
+            &n,
+            options.rational_base_bound,
+            options.algebraic_base_bound,
+            options.large_prime_bound,
+        )
+        .expect("skip factor base builds");
+        let resume_finished = crate::checkpoint::validate_and_restore(
+            &loaded_finished,
+            &n,
+            3,
+            &options,
+            &polynomial,
+            &base_skip,
+        )
+        .expect("finished resume validates");
+        let (complete_skipped, bank_skipped) = collect_relations(
+            &n,
+            &polynomial,
+            &field,
+            &mut base_skip,
+            &options,
+            &cancelled,
+            None,
+            &collector,
+            3,
+            Some(resume_finished),
+            None,
+        )
+        .expect("finished resume succeeds");
+        assert_same_collected(&complete_skipped, &complete_full);
+        assert_same_bank(&bank_skipped, &bank_full);
+        let _ = std::fs::remove_file(&finished_path);
     }
 }

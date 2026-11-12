@@ -29,7 +29,7 @@ class GrayNFSError(ValueError):
         super().__init__(category + ": " + detail)
 
 
-_GRAY_ERROR_PREFIXES = ("input: ", "resource-limit: ", "cancelled: ", "internal: ")
+_GRAY_ERROR_PREFIXES = ("input: ", "resource-limit: ", "cancelled: ", "checkpoint: ", "internal: ")
 
 
 def _to_gray_error(exc: ValueError) -> ValueError:
@@ -82,6 +82,8 @@ def factor(
     seed: int | None = None,
     max_cpu_seconds: int | None = None,
     use_snfs: bool = True,
+    checkpoint_path: str | None = None,
+    resume_path: str | None = None,
 ) -> list[int]:
     """Factor n into ascending prime factors; keywords mirror the documented surface (None means auto or unset, True/False toggles keep or skip a stage)."""
     try:
@@ -111,6 +113,8 @@ def factor(
                 seed,
                 max_cpu_seconds,
                 use_snfs,
+                checkpoint_path,
+                resume_path,
             )
         ]
     except ValueError as exc:
@@ -142,6 +146,8 @@ def factor_with_progress(
     seed: int | None = None,
     max_cpu_seconds: int | None = None,
     use_snfs: bool = True,
+    checkpoint_path: str | None = None,
+    resume_path: str | None = None,
 ) -> list[int]:
     """Factor n like factor, but call callback({stage, current, total, message}) at each stage boundary; the callback is required here (the raw binding accepts None and falls back to a plain factor). Return a falsy value (e.g. False) from the callback to cancel the operation (surfaced as GrayNFSError with category=cancelled); truthy values and None continue."""
     if not callable(callback):
@@ -174,6 +180,8 @@ def factor_with_progress(
                 seed,
                 max_cpu_seconds,
                 use_snfs,
+                checkpoint_path,
+                resume_path,
             )
         ]
     except ValueError as exc:
@@ -239,6 +247,8 @@ def stage_timings(
     seed: int | None = None,
     max_cpu_seconds: int | None = None,
     use_snfs: bool = True,
+    checkpoint_path: str | None = None,
+    resume_path: str | None = None,
 ) -> list[dict[str, Any]]:
     """Return per-stage timing records [{stage, degree, elapsed_ms, detail}] for factoring n without printing."""
     try:
@@ -273,6 +283,8 @@ def stage_timings(
                 seed,
                 max_cpu_seconds,
                 use_snfs,
+                checkpoint_path,
+                resume_path,
             )
         ]
     except ValueError as exc:
@@ -338,6 +350,8 @@ def factor_batch(
     seed: int | None = None,
     max_cpu_seconds: int | None = None,
     use_snfs: bool = True,
+    checkpoint_path: str | None = None,
+    resume_path: str | None = None,
     max_workers: int | None = None,
 ) -> list[list[int] | GrayNFSError]:
     """Factor each input in ns with the shared factor keywords; fail_fast=True raises on the first failure while False records the GrayNFSError in place. max_workers=None (default) factors sequentially; an integer selects that many bounded parallel workers while preserving input order, dividing threads across jobs and queuing jobs so total memory stays within the memory budget."""
@@ -345,6 +359,8 @@ def factor_batch(
         resolved_workers = _validate_max_workers(max_workers)
     except ValueError as exc:
         raise _to_gray_error(exc)
+    if resume_path is not None:
+        raise _to_gray_error(ValueError("input: resume_path is only supported for single-factor calls"))
     if resolved_workers is None or resolved_workers == 1:
         return _factor_batch_sequential(
             ns,
@@ -370,6 +386,7 @@ def factor_batch(
             seed=seed,
             max_cpu_seconds=max_cpu_seconds,
             use_snfs=use_snfs,
+            checkpoint_path=checkpoint_path,
         )
     return _factor_batch_parallel(
         ns,
@@ -395,6 +412,7 @@ def factor_batch(
         seed=seed,
         max_cpu_seconds=max_cpu_seconds,
         use_snfs=use_snfs,
+        checkpoint_path=checkpoint_path,
         max_workers=resolved_workers,
     )
 
@@ -424,10 +442,12 @@ def _factor_batch_sequential(
     seed: int | None,
     max_cpu_seconds: int | None,
     use_snfs: bool,
+    checkpoint_path: str | None,
 ) -> list[list[int] | GrayNFSError]:
     results: list[list[int] | GrayNFSError] = []
-    for value in ns:
+    for index, value in enumerate(ns):
         try:
+            job_checkpoint = None if checkpoint_path is None else f"{checkpoint_path}.{index}"
             results.append(
                 factor(
                     value,
@@ -452,6 +472,7 @@ def _factor_batch_sequential(
                     seed=seed,
                     max_cpu_seconds=max_cpu_seconds,
                     use_snfs=use_snfs,
+                    checkpoint_path=job_checkpoint,
                 )
             )
         except GrayNFSError as exc:
@@ -486,6 +507,7 @@ def _factor_batch_parallel(
     seed: int | None,
     max_cpu_seconds: int | None,
     use_snfs: bool,
+    checkpoint_path: str | None,
     max_workers: int,
 ) -> list[list[int] | GrayNFSError]:
     values = list(ns)
@@ -500,8 +522,9 @@ def _factor_batch_parallel(
         max_workers=max_workers,
     )
 
-    def _run(value: int) -> list[int] | GrayNFSError:
+    def _run(index: int, value: int) -> list[int] | GrayNFSError:
         try:
+            job_checkpoint = None if checkpoint_path is None else f"{checkpoint_path}.{index}"
             return factor(
                 value,
                 degree=degree,
@@ -525,12 +548,13 @@ def _factor_batch_parallel(
                 seed=seed,
                 max_cpu_seconds=max_cpu_seconds,
                 use_snfs=use_snfs,
+                checkpoint_path=job_checkpoint,
             )
         except GrayNFSError as exc:
             return exc
 
     with ThreadPoolExecutor(max_workers=slots) as executor:
-        futures = [executor.submit(_run, value) for value in values]
+        futures = [executor.submit(_run, index, value) for index, value in enumerate(values)]
         results: list[list[int] | GrayNFSError] = []
         for future in futures:
             outcome = future.result()
@@ -567,6 +591,8 @@ def factor_report(
     seed: int | None = None,
     max_cpu_seconds: int | None = None,
     use_snfs: bool = True,
+    checkpoint_path: str | None = None,
+    resume_path: str | None = None,
 ) -> dict[str, Any]:
     """Factor n once and return {factors, factor_confidence, polynomial, root, method, degree, relations, rank, elapsed_ms, timings}."""
     try:
@@ -594,6 +620,8 @@ def factor_report(
             seed,
             max_cpu_seconds,
             use_snfs,
+            checkpoint_path,
+            resume_path,
         )
     except ValueError as exc:
         raise _to_gray_error(exc)

@@ -23,6 +23,8 @@ def factor_decimal(
     seed: int | None = ...,
     max_cpu_seconds: int | None = ...,
     use_snfs: bool = ...,
+    checkpoint_path: str | None = ...,
+    resume_path: str | None = ...,
 ) -> list[str]: ...
 def factor_with_progress_decimal(
     n: str,
@@ -48,6 +50,8 @@ def factor_with_progress_decimal(
     seed: int | None = ...,
     max_cpu_seconds: int | None = ...,
     use_snfs: bool = ...,
+    checkpoint_path: str | None = ...,
+    resume_path: str | None = ...,
 ) -> list[str]: ...
 def stage_timings_decimal(
     n: str,
@@ -72,6 +76,8 @@ def stage_timings_decimal(
     seed: int | None = ...,
     max_cpu_seconds: int | None = ...,
     use_snfs: bool = ...,
+    checkpoint_path: str | None = ...,
+    resume_path: str | None = ...,
 ) -> list[dict[str, Any]]: ...
 def is_probable_prime_decimal(n: str) -> bool: ...
 def is_probable_prime_fast_decimal(n: str, rounds: int = ...) -> bool: ...
@@ -99,5 +105,7 @@ def factor_report_decimal(
     seed: int | None = ...,
     max_cpu_seconds: int | None = ...,
     use_snfs: bool = ...,
+    checkpoint_path: str | None = ...,
+    resume_path: str | None = ...,
 ) -> dict[str, Any]: ...
 def version() -> str: ...

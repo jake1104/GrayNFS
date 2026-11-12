@@ -20,6 +20,8 @@ pub enum FactorError {
     ResourceLimit(String),
     #[error("integer factorization failed: {0}")]
     Factorization(String),
+    #[error("checkpoint refused: {0}")]
+    Checkpoint(String),
     #[error("unsupported polynomial degree {0}; requires degree 2, 3, 4 or 5")]
     UnsupportedDegree(usize),
 }

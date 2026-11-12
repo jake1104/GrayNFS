@@ -31,6 +31,8 @@ def factor(
     seed: int | None = None,
     max_cpu_seconds: int | None = None,
     use_snfs: bool = True,
+    checkpoint_path: str | None = None,
+    resume_path: str | None = None,
 ) -> list[int]: ...
 def factor_with_progress(
     n: int,
@@ -57,6 +59,8 @@ def factor_with_progress(
     seed: int | None = None,
     max_cpu_seconds: int | None = None,
     use_snfs: bool = True,
+    checkpoint_path: str | None = None,
+    resume_path: str | None = None,
 ) -> list[int]: ...
 def stage_timings(
     n: int,
@@ -82,6 +86,8 @@ def stage_timings(
     seed: int | None = None,
     max_cpu_seconds: int | None = None,
     use_snfs: bool = True,
+    checkpoint_path: str | None = None,
+    resume_path: str | None = None,
 ) -> list[dict[str, Any]]: ...
 def is_probable_prime(n: int) -> bool: ...
 def is_probable_prime_fast(n: int, rounds: int = 64) -> bool: ...
@@ -110,6 +116,8 @@ def factor_report(
     seed: int | None = None,
     max_cpu_seconds: int | None = None,
     use_snfs: bool = True,
+    checkpoint_path: str | None = None,
+    resume_path: str | None = None,
 ) -> dict[str, Any]: ...
 def version() -> str: ...
 def factor_batch(
@@ -137,5 +145,7 @@ def factor_batch(
     seed: int | None = None,
     max_cpu_seconds: int | None = None,
     use_snfs: bool = True,
+    checkpoint_path: str | None = None,
+    resume_path: str | None = None,
     max_workers: int | None = None,
 ) -> list[list[int] | GrayNFSError]: ...

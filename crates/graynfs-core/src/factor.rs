@@ -991,7 +991,9 @@ where
             Err(error) if options.allow_fallback => {
                 if matches!(
                     error,
-                    FactorError::ResourceLimit(_) | FactorError::Cancelled
+                    FactorError::ResourceLimit(_)
+                        | FactorError::Cancelled
+                        | FactorError::Checkpoint(_)
                 ) {
                     return Err(error);
                 }
@@ -1278,6 +1280,7 @@ fn pilot_error_kind(
         Err(FactorError::Factorization(_)) => "Factorization",
         Err(FactorError::InvalidInput(_)) => "InvalidInput",
         Err(FactorError::UnsupportedDegree(_)) => "UnsupportedDegree",
+        Err(FactorError::Checkpoint(_)) => "Checkpoint",
     }
 }
 

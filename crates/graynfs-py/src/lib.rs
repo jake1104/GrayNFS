@@ -11,13 +11,16 @@ fn error_category(error: &FactorError) -> &'static str {
         FactorError::InvalidInput(_) => "input",
         FactorError::ResourceLimit(_) => "resource-limit",
         FactorError::Cancelled => "cancelled",
+        FactorError::Checkpoint(_) => "checkpoint",
         _ => "internal",
     }
 }
 
 fn error_detail(error: &FactorError) -> String {
     match error {
-        FactorError::InvalidInput(detail) | FactorError::ResourceLimit(detail) => detail.clone(),
+        FactorError::InvalidInput(detail)
+        | FactorError::ResourceLimit(detail)
+        | FactorError::Checkpoint(detail) => detail.clone(),
         FactorError::Cancelled => "the operation was cancelled".to_string(),
         other => other.to_string(),
     }
@@ -63,6 +66,8 @@ fn build_options(
     seed: Option<u64>,
     max_cpu_seconds: Option<u64>,
     use_snfs: bool,
+    checkpoint_path: Option<String>,
+    resume_path: Option<String>,
 ) -> FactorOptions {
     FactorOptions {
         degree,
@@ -86,13 +91,15 @@ fn build_options(
         perf_mode,
         max_cpu_seconds,
         use_snfs,
+        checkpoint_path: checkpoint_path.map(std::path::PathBuf::from),
+        resume_path: resume_path.map(std::path::PathBuf::from),
         ..FactorOptions::default()
     }
 }
 
 #[allow(clippy::too_many_arguments)]
 #[pyfunction]
-#[pyo3(signature = (n, degree=None, rational_base_bound=2000, algebraic_base_bound=2000, sieve_a_bound=700, sieve_b_bound=120, timeout_seconds=None, max_memory_mb=None, allow_fallback=true, use_fermat=true, use_pm1=true, use_pp1=true, use_ecm=true, use_mpqs=true, threads=None, perf_mode=false, skip_preprocessing=false, large_prime_bound=50000, enable_double_large_primes=false, seed=None, max_cpu_seconds=None, use_snfs=true))]
+#[pyo3(signature = (n, degree=None, rational_base_bound=2000, algebraic_base_bound=2000, sieve_a_bound=700, sieve_b_bound=120, timeout_seconds=None, max_memory_mb=None, allow_fallback=true, use_fermat=true, use_pm1=true, use_pp1=true, use_ecm=true, use_mpqs=true, threads=None, perf_mode=false, skip_preprocessing=false, large_prime_bound=50000, enable_double_large_primes=false, seed=None, max_cpu_seconds=None, use_snfs=true, checkpoint_path=None, resume_path=None))]
 fn factor_decimal(
     py: Python<'_>,
     n: &str,
@@ -117,6 +124,8 @@ fn factor_decimal(
     seed: Option<u64>,
     max_cpu_seconds: Option<u64>,
     use_snfs: bool,
+    checkpoint_path: Option<String>,
+    resume_path: Option<String>,
 ) -> PyResult<Vec<String>> {
     let value = parse_decimal(n).map_err(to_py_error)?;
     let options = build_options(
@@ -141,6 +150,8 @@ fn factor_decimal(
         seed,
         max_cpu_seconds,
         use_snfs,
+        checkpoint_path,
+        resume_path,
     );
     let report = py
         .detach(|| factor(&value, &options))
@@ -150,7 +161,7 @@ fn factor_decimal(
 
 #[allow(clippy::too_many_arguments)]
 #[pyfunction]
-#[pyo3(signature = (n, callback=None, degree=None, rational_base_bound=2000, algebraic_base_bound=2000, sieve_a_bound=700, sieve_b_bound=120, timeout_seconds=None, max_memory_mb=None, allow_fallback=true, use_fermat=true, use_pm1=true, use_pp1=true, use_ecm=true, use_mpqs=true, threads=None, perf_mode=false, skip_preprocessing=false, large_prime_bound=50000, enable_double_large_primes=false, seed=None, max_cpu_seconds=None, use_snfs=true))]
+#[pyo3(signature = (n, callback=None, degree=None, rational_base_bound=2000, algebraic_base_bound=2000, sieve_a_bound=700, sieve_b_bound=120, timeout_seconds=None, max_memory_mb=None, allow_fallback=true, use_fermat=true, use_pm1=true, use_pp1=true, use_ecm=true, use_mpqs=true, threads=None, perf_mode=false, skip_preprocessing=false, large_prime_bound=50000, enable_double_large_primes=false, seed=None, max_cpu_seconds=None, use_snfs=true, checkpoint_path=None, resume_path=None))]
 fn factor_with_progress_decimal(
     py: Python<'_>,
     n: &str,
@@ -176,6 +187,8 @@ fn factor_with_progress_decimal(
     seed: Option<u64>,
     max_cpu_seconds: Option<u64>,
     use_snfs: bool,
+    checkpoint_path: Option<String>,
+    resume_path: Option<String>,
 ) -> PyResult<Vec<String>> {
     let value = parse_decimal(n).map_err(to_py_error)?;
     let options = build_options(
@@ -200,6 +213,8 @@ fn factor_with_progress_decimal(
         seed,
         max_cpu_seconds,
         use_snfs,
+        checkpoint_path.clone(),
+        resume_path.clone(),
     );
     if let Some(callback) = callback {
         let report = py
@@ -263,6 +278,8 @@ fn factor_with_progress_decimal(
             seed,
             max_cpu_seconds,
             use_snfs,
+            checkpoint_path,
+            resume_path,
         )
     }
 }
@@ -306,7 +323,7 @@ fn is_prime_proof_decimal(py: Python<'_>, n: &str, method: &str) -> PyResult<boo
 
 #[allow(clippy::too_many_arguments)]
 #[pyfunction]
-#[pyo3(signature = (n, degree=None, rational_base_bound=2000, algebraic_base_bound=2000, sieve_a_bound=700, sieve_b_bound=120, timeout_seconds=None, max_memory_mb=None, allow_fallback=true, use_fermat=true, use_pm1=true, use_pp1=true, use_ecm=true, use_mpqs=true, threads=None, perf_mode=false, skip_preprocessing=false, large_prime_bound=50000, enable_double_large_primes=false, seed=None, max_cpu_seconds=None, use_snfs=true))]
+#[pyo3(signature = (n, degree=None, rational_base_bound=2000, algebraic_base_bound=2000, sieve_a_bound=700, sieve_b_bound=120, timeout_seconds=None, max_memory_mb=None, allow_fallback=true, use_fermat=true, use_pm1=true, use_pp1=true, use_ecm=true, use_mpqs=true, threads=None, perf_mode=false, skip_preprocessing=false, large_prime_bound=50000, enable_double_large_primes=false, seed=None, max_cpu_seconds=None, use_snfs=true, checkpoint_path=None, resume_path=None))]
 fn stage_timings_decimal(
     py: Python<'_>,
     n: &str,
@@ -331,6 +348,8 @@ fn stage_timings_decimal(
     seed: Option<u64>,
     max_cpu_seconds: Option<u64>,
     use_snfs: bool,
+    checkpoint_path: Option<String>,
+    resume_path: Option<String>,
 ) -> PyResult<Vec<Py<PyAny>>> {
     let value = parse_decimal(n).map_err(to_py_error)?;
     let options = build_options(
@@ -355,6 +374,8 @@ fn stage_timings_decimal(
         seed,
         max_cpu_seconds,
         use_snfs,
+        checkpoint_path,
+        resume_path,
     );
     let report = py
         .detach(|| factor(&value, &options))
@@ -368,7 +389,7 @@ fn stage_timings_decimal(
 
 #[allow(clippy::too_many_arguments)]
 #[pyfunction]
-#[pyo3(signature = (n, degree=None, rational_base_bound=2000, algebraic_base_bound=2000, sieve_a_bound=700, sieve_b_bound=120, timeout_seconds=None, max_memory_mb=None, allow_fallback=true, use_fermat=true, use_pm1=true, use_pp1=true, use_ecm=true, use_mpqs=true, threads=None, perf_mode=false, skip_preprocessing=false, large_prime_bound=50000, enable_double_large_primes=false, seed=None, max_cpu_seconds=None, use_snfs=true))]
+#[pyo3(signature = (n, degree=None, rational_base_bound=2000, algebraic_base_bound=2000, sieve_a_bound=700, sieve_b_bound=120, timeout_seconds=None, max_memory_mb=None, allow_fallback=true, use_fermat=true, use_pm1=true, use_pp1=true, use_ecm=true, use_mpqs=true, threads=None, perf_mode=false, skip_preprocessing=false, large_prime_bound=50000, enable_double_large_primes=false, seed=None, max_cpu_seconds=None, use_snfs=true, checkpoint_path=None, resume_path=None))]
 fn factor_report_decimal(
     py: Python<'_>,
     n: &str,
@@ -393,6 +414,8 @@ fn factor_report_decimal(
     seed: Option<u64>,
     max_cpu_seconds: Option<u64>,
     use_snfs: bool,
+    checkpoint_path: Option<String>,
+    resume_path: Option<String>,
 ) -> PyResult<Py<PyDict>> {
     let value = parse_decimal(n).map_err(to_py_error)?;
     let options = build_options(
@@ -417,6 +440,8 @@ fn factor_report_decimal(
         seed,
         max_cpu_seconds,
         use_snfs,
+        checkpoint_path,
+        resume_path,
     );
     let (result, timings) = py.detach(|| factor_with_timings(&value, &options, |_| Ok(())));
     let report = result.map_err(to_py_error)?;
@@ -470,6 +495,36 @@ mod tests {
             None,
             None,
             true,
+            None,
+            None,
+        )
+    }
+
+    fn checkpoint_options() -> FactorOptions {
+        build_options(
+            None,
+            2000,
+            2000,
+            700,
+            120,
+            None,
+            None,
+            true,
+            true,
+            true,
+            true,
+            true,
+            true,
+            None,
+            false,
+            false,
+            50_000,
+            false,
+            None,
+            None,
+            true,
+            Some("collect.json".to_string()),
+            Some("resume.json".to_string()),
         )
     }
 
@@ -515,12 +570,37 @@ mod tests {
             None,
             Some(30),
             true,
+            None,
+            None,
         );
         assert_eq!(capped.max_cpu_seconds, Some(30));
         assert_eq!(capped.cpu_budget_ms(), Some(30_000));
         let open = base_options(None);
         assert_eq!(open.max_cpu_seconds, None);
         assert_eq!(open.cpu_budget_ms(), None);
+    }
+
+    #[test]
+    fn build_options_carries_checkpoint_paths() {
+        let options = checkpoint_options();
+        assert_eq!(
+            options.checkpoint_path,
+            Some(std::path::PathBuf::from("collect.json"))
+        );
+        assert_eq!(
+            options.resume_path,
+            Some(std::path::PathBuf::from("resume.json"))
+        );
+        let plain = base_options(None);
+        assert_eq!(plain.checkpoint_path, None);
+        assert_eq!(plain.resume_path, None);
+    }
+
+    #[test]
+    fn error_category_maps_checkpoint() {
+        let error = FactorError::Checkpoint("checkpoint checksum mismatch".to_string());
+        assert_eq!(error_category(&error), "checkpoint");
+        assert!(py_error_message(&error).starts_with("checkpoint: "));
     }
 
     #[test]

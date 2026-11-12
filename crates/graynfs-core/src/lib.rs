@@ -2,6 +2,7 @@ pub mod algebraic;
 pub mod base;
 pub mod batch;
 pub mod cascade;
+pub mod checkpoint;
 pub mod cubic;
 pub mod ecm;
 pub mod error;
@@ -26,6 +27,9 @@ pub mod snfs;
 pub mod square_root;
 pub mod time;
 
+pub use checkpoint::{
+    CHECKPOINT_VERSION, CheckpointPayload, load_gnfs_checkpoint, save_gnfs_checkpoint,
+};
 pub use error::FactorError;
 pub use factor::{
     CancellationToken, FactorReport, ProgressEvent, StageTiming, classify_factor, factor,

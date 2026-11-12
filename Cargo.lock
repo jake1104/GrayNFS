@@ -264,6 +264,8 @@ dependencies = [
  "num-traits",
  "rand",
  "rand_chacha",
+ "serde",
+ "serde_json",
  "thiserror",
  "wasm-bindgen",
  "wasm-bindgen-test",

@@ -109,6 +109,13 @@ struct Cli {
         help = "Mark timing records as performance-mode runs without changing factorization behavior"
     )]
     perf_mode: bool,
+    #[arg(
+        long,
+        help = "Write GNFS collector checkpoints to PATH during long runs"
+    )]
+    checkpoint: Option<PathBuf>,
+    #[arg(long, help = "Resume a GNFS run from the checkpoint file at PATH")]
+    resume: Option<PathBuf>,
     #[arg(long, help = "Emit the result as a single JSON object on stdout")]
     json: bool,
     #[arg(long, help = "Stream per-event factorization progress to stderr")]
@@ -161,6 +168,8 @@ fn options_from_cli(cli: &Cli) -> FactorOptions {
         use_mpqs: !cli.no_mpqs,
         threads: cli.threads,
         perf_mode: cli.perf_mode,
+        checkpoint_path: cli.checkpoint.clone(),
+        resume_path: cli.resume.clone(),
         ..FactorOptions::default()
     }
 }
@@ -461,6 +470,10 @@ fn run_batch(cli: &Cli, input: &PathBuf, continue_on_error: bool, jobs: usize) -
         eprintln!("error: input: --jobs must be at least one");
         return ExitCode::FAILURE;
     }
+    if cli.checkpoint.is_some() || cli.resume.is_some() {
+        eprintln!("error: input: --checkpoint and --resume are single-number options");
+        return ExitCode::FAILURE;
+    }
     let file = match std::fs::File::open(input) {
         Ok(handle) => handle,
         Err(error) => {
@@ -666,6 +679,7 @@ fn error_parts(error: &FactorError) -> (&'static str, String) {
         FactorError::InvalidInput(detail) => ("input", detail.clone()),
         FactorError::ResourceLimit(detail) => ("resource-limit", detail.clone()),
         FactorError::Cancelled => ("cancelled", "the operation was cancelled".to_string()),
+        FactorError::Checkpoint(detail) => ("checkpoint", detail.clone()),
         other => ("internal", other.to_string()),
     }
 }
@@ -896,6 +910,15 @@ mod tests {
             assert_eq!(category, "internal");
             assert!(!detail.is_empty());
         }
+    }
+
+    #[test]
+    fn error_parts_maps_checkpoint() {
+        let (category, detail) = error_parts(&FactorError::Checkpoint(
+            "checkpoint checksum mismatch".to_string(),
+        ));
+        assert_eq!(category, "checkpoint");
+        assert!(detail.contains("checksum"));
     }
 
     #[test]
@@ -1227,6 +1250,80 @@ mod tests {
                 .as_str()
                 .is_some_and(|text| text.starts_with("cancelled"))
         );
+    }
+
+    #[test]
+    fn cli_checkpoint_resume_flags_default_absent_and_parse_explicit() {
+        let bare = Cli::try_parse_from(["graynfs", "100160063"]).expect("parse without flags");
+        assert_eq!(bare.checkpoint, None);
+        assert_eq!(bare.resume, None);
+        let flagged = Cli::try_parse_from([
+            "graynfs",
+            "100160063",
+            "--checkpoint",
+            "collect.json",
+            "--resume",
+            "resume.json",
+        ])
+        .expect("parse with checkpoint flags");
+        assert_eq!(flagged.checkpoint, Some(PathBuf::from("collect.json")));
+        assert_eq!(flagged.resume, Some(PathBuf::from("resume.json")));
+        let options = options_from_cli(&flagged);
+        assert_eq!(options.checkpoint_path, Some(PathBuf::from("collect.json")));
+        assert_eq!(options.resume_path, Some(PathBuf::from("resume.json")));
+        let plain = options_from_cli(&bare);
+        assert_eq!(plain.checkpoint_path, None);
+        assert_eq!(plain.resume_path, None);
+    }
+
+    #[test]
+    fn cli_batch_rejects_checkpoint_and_resume_flags() {
+        let cli = Cli::try_parse_from([
+            "graynfs",
+            "--checkpoint",
+            "collect.json",
+            "batch",
+            "--input",
+            "numbers.txt",
+        ])
+        .expect("parse batch with checkpoint flag");
+        match &cli.command {
+            Some(Commands::Batch {
+                input,
+                continue_on_error,
+                jobs,
+                ..
+            }) => {
+                assert_eq!(
+                    run_batch(&cli, input, *continue_on_error, *jobs),
+                    ExitCode::FAILURE
+                );
+            }
+            None => panic!("batch command present"),
+        }
+        let cli = Cli::try_parse_from([
+            "graynfs",
+            "--resume",
+            "resume.json",
+            "batch",
+            "--input",
+            "numbers.txt",
+        ])
+        .expect("parse batch with resume flag");
+        match &cli.command {
+            Some(Commands::Batch {
+                input,
+                continue_on_error,
+                jobs,
+                ..
+            }) => {
+                assert_eq!(
+                    run_batch(&cli, input, *continue_on_error, *jobs),
+                    ExitCode::FAILURE
+                );
+            }
+            None => panic!("batch command present"),
+        }
     }
 
     #[test]

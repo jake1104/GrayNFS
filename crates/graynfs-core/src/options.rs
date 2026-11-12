@@ -1,3 +1,4 @@
+use std::path::PathBuf;
 use std::time::Duration;
 
 use crate::time::Instant;
@@ -104,6 +105,8 @@ pub struct FactorOptions {
     pub use_frobenius: bool,
     pub use_snfs: bool,
     pub perf_mode: bool,
+    pub checkpoint_path: Option<PathBuf>,
+    pub resume_path: Option<PathBuf>,
 }
 
 impl Default for FactorOptions {
@@ -134,6 +137,8 @@ impl Default for FactorOptions {
             use_frobenius: false,
             use_snfs: true,
             perf_mode: false,
+            checkpoint_path: None,
+            resume_path: None,
         }
     }
 }
