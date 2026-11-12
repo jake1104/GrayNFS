@@ -1908,7 +1908,7 @@ impl SpecialForm {
 
 const SPECIAL_BASE_LIMIT: u64 = 1_000_000;
 const LOW_HAMMING_WEIGHT_LIMIT: u64 = 12;
-const SMALL_COEFFICIENT_SCAN_MIN_BITS: u64 = 128;
+pub(crate) const SMALL_COEFFICIENT_SCAN_MIN_BITS: u64 = 128;
 const SMALL_COEFFICIENT_SCAN_MAX: u64 = 16;
 
 pub(crate) fn popcount_weight(n: &Integer) -> u64 {

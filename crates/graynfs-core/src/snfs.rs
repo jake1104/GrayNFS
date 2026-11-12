@@ -1,5 +1,11 @@
+#[cfg(test)]
+use crate::factor::{SMALL_COEFFICIENT_SCAN_MIN_BITS, SpecialForm, detect_special_form};
+#[cfg(test)]
+use crate::general::{IrreducibilityOutcome, classify_irreducibility, has_unit_index};
 use crate::integer::Integer;
 use crate::number_field::NumberField;
+#[cfg(test)]
+use crate::polynomial::PolynomialPair;
 
 pub struct SnfsForm {
     pub a: u64,
@@ -56,6 +62,66 @@ pub fn snfs_polynomial(form: &SnfsForm) -> Option<SnfsPolynomial> {
     Some(SnfsPolynomial { field, root })
 }
 
+#[cfg(test)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum SnfsDecision {
+    Promote,
+    Fallback(&'static str),
+}
+
+#[cfg(test)]
+pub(crate) fn gate_snfs_form(form: &SnfsForm) -> SnfsDecision {
+    if !is_snfs_eligible(form) {
+        return SnfsDecision::Fallback("shape");
+    }
+    let built = match snfs_polynomial(form) {
+        Some(built) => built,
+        None => return SnfsDecision::Fallback("shape"),
+    };
+    let candidate = PolynomialPair {
+        degree: built.field.degree,
+        coefficients: built.field.polynomial.clone(),
+        m: built.root.clone(),
+    };
+    if matches!(
+        classify_irreducibility(&candidate),
+        IrreducibilityOutcome::Rejected
+    ) {
+        return SnfsDecision::Fallback("reducible");
+    }
+    if !has_unit_index(&candidate) {
+        return SnfsDecision::Fallback("unit-index");
+    }
+    SnfsDecision::Promote
+}
+
+#[cfg(test)]
+pub(crate) fn gate_special_form(n: &Integer, form: &SpecialForm) -> SnfsDecision {
+    if form.k == 0 {
+        return SnfsDecision::Fallback("low-weight-only");
+    }
+    if form.a != 1 && n.bits() < SMALL_COEFFICIENT_SCAN_MIN_BITS {
+        return SnfsDecision::Fallback("sub-128-small-coefficient");
+    }
+    gate_snfs_form(&SnfsForm::new(form.a, form.b, form.k, form.c, form.sign))
+}
+
+#[cfg(test)]
+pub(crate) fn gate_detected(n: &Integer) -> SnfsDecision {
+    match detect_special_form(n) {
+        Some(form) => gate_special_form(n, &form),
+        None => SnfsDecision::Fallback("undetected"),
+    }
+}
+
+#[cfg(test)]
+pub(crate) fn decide_on_scan(scan: Option<Integer>) -> SnfsDecision {
+    match scan {
+        Some(_) => SnfsDecision::Promote,
+        None => SnfsDecision::Fallback("scan-miss"),
+    }
+}
+
 pub struct SnfsCorpusEntry {
     pub form: SnfsForm,
     pub n: Integer,
@@ -85,7 +151,11 @@ pub fn snfs_corpus() -> Vec<SnfsCorpusEntry> {
 #[cfg(test)]
 mod tests {
     use super::{Integer, SnfsForm};
-    use super::{is_snfs_eligible, snfs_corpus, snfs_polynomial};
+    use super::{
+        SnfsDecision, decide_on_scan, gate_detected, gate_snfs_form, gate_special_form,
+        is_snfs_eligible, snfs_corpus, snfs_polynomial,
+    };
+    use crate::factor::SpecialForm;
     use num_traits::Zero;
 
     fn evaluate(coefficients: &[Integer], point: &Integer) -> Integer {
@@ -157,6 +227,89 @@ mod tests {
     }
 
     #[test]
+    fn corpus_presets_route_through_irreducibility_and_unit_gates() {
+        let expected = [
+            "reducible",
+            "unit-index",
+            "unit-index",
+            "reducible",
+            "unit-index",
+            "reducible",
+            "unit-index",
+            "unit-index",
+        ];
+        for (entry, reason) in snfs_corpus().iter().zip(expected) {
+            assert_eq!(gate_snfs_form(&entry.form), SnfsDecision::Fallback(reason));
+        }
+    }
+
+    #[test]
+    fn low_weight_only_detections_never_promote() {
+        let heleven = Integer::from(1_000_000_192_513_u64);
+        let detected = crate::factor::detect_special_form(&heleven).expect("heuristic detection");
+        assert_eq!(detected.k, 0);
+        assert_eq!(
+            gate_detected(&heleven),
+            SnfsDecision::Fallback("low-weight-only")
+        );
+        let synthetic = SpecialForm {
+            a: 0,
+            b: 0,
+            k: 0,
+            c: 0,
+            sign: 0,
+            low_weight: true,
+        };
+        assert_eq!(
+            gate_special_form(&heleven, &synthetic),
+            SnfsDecision::Fallback("low-weight-only")
+        );
+    }
+
+    #[test]
+    fn sub_128_small_coefficient_forms_never_promote() {
+        let n = Integer::from(2_000_000_001_u64);
+        assert!(n.bits() < 128);
+        assert!(crate::factor::detect_special_form(&n).is_none());
+        assert_eq!(gate_detected(&n), SnfsDecision::Fallback("undetected"));
+        let synthetic = SpecialForm {
+            a: 2,
+            b: 1000,
+            k: 3,
+            c: 1,
+            sign: 1,
+            low_weight: false,
+        };
+        assert_eq!(
+            gate_special_form(&n, &synthetic),
+            SnfsDecision::Fallback("sub-128-small-coefficient")
+        );
+    }
+
+    #[test]
+    fn above_128_small_coefficient_clears_the_bit_gate() {
+        let base = Integer::from(1_000_000_u64);
+        let n = Integer::from(2) * base.pow(7_u32) + Integer::from(1);
+        assert!(n.bits() >= 128);
+        let detected =
+            crate::factor::detect_special_form(&n).expect("exact small-coefficient detection");
+        assert_eq!(detected.a, 2);
+        assert_eq!(
+            gate_special_form(&n, &detected),
+            SnfsDecision::Fallback("shape")
+        );
+    }
+
+    #[test]
+    fn scan_miss_falls_back_to_generic() {
+        assert_eq!(decide_on_scan(None), SnfsDecision::Fallback("scan-miss"));
+        assert_eq!(
+            decide_on_scan(Some(Integer::from(7))),
+            SnfsDecision::Promote
+        );
+    }
+
+    #[test]
     fn ineligible_shapes_stay_out() {
         let cases = [
             SnfsForm::new(1, 10, 0, 1, 1),
@@ -172,6 +325,17 @@ mod tests {
         for form in &cases {
             assert!(!is_snfs_eligible(form));
             assert!(snfs_polynomial(form).is_none());
+        }
+    }
+
+    #[test]
+    fn shape_ineligible_forms_fall_back_to_generic() {
+        for form in [
+            SnfsForm::new(1, 10, 2, 1, 1),
+            SnfsForm::new(1, 10, 6, 1, 1),
+            SnfsForm::new(0, 10, 3, 1, 1),
+        ] {
+            assert_eq!(gate_snfs_form(&form), SnfsDecision::Fallback("shape"));
         }
     }
 }

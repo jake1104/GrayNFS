@@ -948,7 +948,7 @@ const IRREDUCIBILITY_PRIMES: [u64; 10] = [2, 3, 5, 7, 11, 13, 17, 19, 23, 29];
 
 const IRREDUCIBILITY_RETRY_PRIMES: [u64; 2] = [1009, 1013];
 
-enum IrreducibilityOutcome {
+pub(crate) enum IrreducibilityOutcome {
     AcceptedSmall,
     AcceptedRetry,
     Rejected,
@@ -972,7 +972,7 @@ fn irreducible_mod_any(candidate: &PolynomialPair, primes: &[u64]) -> bool {
     false
 }
 
-fn classify_irreducibility(candidate: &PolynomialPair) -> IrreducibilityOutcome {
+pub(crate) fn classify_irreducibility(candidate: &PolynomialPair) -> IrreducibilityOutcome {
     if irreducible_mod_any(candidate, &IRREDUCIBILITY_PRIMES) {
         IrreducibilityOutcome::AcceptedSmall
     } else if irreducible_mod_any(candidate, &IRREDUCIBILITY_RETRY_PRIMES) {
@@ -990,7 +990,7 @@ fn is_irreducible_candidate(candidate: &PolynomialPair) -> bool {
     )
 }
 
-fn has_unit_index(polynomial: &PolynomialPair) -> bool {
+pub(crate) fn has_unit_index(polynomial: &PolynomialPair) -> bool {
     let value = integer_abs(&discriminant(polynomial));
     if value.is_zero() {
         return false;
