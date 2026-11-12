@@ -316,7 +316,7 @@ fn is_prime_proof_decimal(py: Python<'_>, n: &str, method: &str) -> PyResult<boo
             ))
         }
         _ => Err(PyValueError::new_err(format!(
-            "input: unknown proof method: {method}"
+            "input: unknown proof method: {method} (expected one of aks|bpsw|frobenius|bpsw_frobenius); over-64-bit aks False means unproven, not composite"
         ))),
     })
 }
