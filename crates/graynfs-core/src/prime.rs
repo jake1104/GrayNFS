@@ -932,7 +932,7 @@ mod prime_tests {
     }
     #[test]
     fn walk_aborts_on_expired_deadline() {
-        let past = Some(std::time::Instant::now() + Duration::from_millis(1));
+        let past = Some(crate::time::Instant::now() + Duration::from_millis(1));
         std::thread::sleep(Duration::from_millis(5));
         let mut count = 0_usize;
         assert!(!for_each_prime(200_000_000, past, |_| {

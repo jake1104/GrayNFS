@@ -1294,7 +1294,7 @@ mod cascade_tests {
 
     #[test]
     fn profiler_carries_live_device_signals() {
-        use std::time::{Duration, Instant};
+        use crate::time::{Duration, Instant};
         let n = Integer::from(1_u8) << 100;
         let deadline = Some(Instant::now() + Duration::from_secs(60));
         let mut signals = CascadeSignals::collect(&n, deadline);
@@ -1330,7 +1330,7 @@ mod cascade_tests {
     #[test]
     fn profiler_honors_options_budget() {
         use crate::options::FactorOptions;
-        use std::time::{Duration, Instant};
+        use crate::time::{Duration, Instant};
         let n = Integer::from(1_u8) << 100;
         let options = FactorOptions {
             threads: Some(4),
@@ -1544,7 +1544,7 @@ mod cascade_tests {
             max_duration: Some(Duration::from_millis(50)),
             ..FactorOptions::default()
         };
-        let deadline = options.effective_deadline(std::time::Instant::now());
+        let deadline = options.effective_deadline(crate::time::Instant::now());
         let mut signals = CascadeSignals::collect_with_options(&n, &options, deadline);
         let timings = TimingCollector::default();
         let cancelled = AtomicBool::new(false);
@@ -1586,7 +1586,7 @@ mod cascade_tests {
             max_memory_mb: Some(0),
             ..FactorOptions::default()
         };
-        let deadline = options.effective_deadline(std::time::Instant::now());
+        let deadline = options.effective_deadline(crate::time::Instant::now());
         let mut signals = CascadeSignals::collect_with_options(&n, &options, deadline);
         let full_workers = options.effective_workers();
         let timings = TimingCollector::default();

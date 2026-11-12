@@ -227,7 +227,9 @@ pub(crate) fn order_dependencies_by_cost(dependencies: &[Vec<usize>]) -> Vec<usi
 
 #[cfg(test)]
 mod tests {
-    use super::{Masked, join_candidate_worker, order_dependencies_by_cost, rank_and_dependencies};
+    #[cfg(not(target_arch = "wasm32"))]
+    use super::join_candidate_worker;
+    use super::{Masked, order_dependencies_by_cost, rank_and_dependencies};
 
     struct TestRelation {
         mask: Vec<u64>,
@@ -245,6 +247,7 @@ mod tests {
             .collect()
     }
 
+    #[cfg(not(target_arch = "wasm32"))]
     #[test]
     fn panicking_candidate_worker_falls_back_to_empty() {
         std::thread::scope(|scope| {
