@@ -1730,4 +1730,95 @@ mod cascade_tests {
         assert_eq!(reclaim_ecm_digits(escalate_digits(25)), 25);
         assert_eq!(reclaim_ecm_digits(15), 10);
     }
+
+    #[test]
+    fn tranche_hit_returns_first_report_early() {
+        use crate::time::Instant;
+        let target = Integer::from(1000003) * Integer::from(1000033);
+        let deadline = Some(Instant::now() + std::time::Duration::from_secs(60));
+        let reference = crate::ecm::ecm_factor_report(&target, 12, None, deadline, 1, None);
+        let expected = reference.divisor.clone().expect("reference ecm run hits");
+        assert!(&target % &expected == Integer::from(0));
+        assert!(reference.curves_run > 0);
+        let (combined, first_box, cap_note, ecm_box_ms) =
+            super::ecm_tranche_with_resume(&target, deadline, Some(60_000), None, 1, None, 12);
+        assert_eq!(first_box, Some(30_000));
+        assert_eq!(cap_note, None);
+        assert!(ecm_box_ms.is_some());
+        let won = combined
+            .divisor
+            .clone()
+            .expect("tranche driver hits first slice");
+        assert!(&target % &won == Integer::from(0));
+        assert_eq!(combined.curves_run, reference.curves_run);
+    }
+
+    #[test]
+    fn tranche_miss_with_remaining_budget_reaches_second_slice() {
+        use crate::time::Instant;
+        let prime = Integer::from(2305843009213693951_u64);
+        let deadline = Some(Instant::now() + std::time::Duration::from_secs(10));
+        let (combined, first_box, _, ecm_box_ms) =
+            super::ecm_tranche_with_resume(&prime, deadline, Some(400), Some(400), 16, None, 12);
+        assert_eq!(first_box, Some(200));
+        assert!(combined.divisor.is_none());
+        assert!(combined.curves_run > 0);
+        assert!(combined.elapsed_ms >= first_box.expect("first box"));
+        assert!(ecm_box_ms.is_some());
+    }
+
+    #[test]
+    fn combine_ecm_reports_sums_and_prefers_second() {
+        let first = crate::ecm::EcmReport {
+            divisor: Some(Integer::from(101)),
+            curves_run: 10,
+            elapsed_ms: 120,
+            stage_one_ms: 80,
+            stage_two_ms: 30,
+            end_digits: 12,
+            end_curve: 11,
+        };
+        let second = crate::ecm::EcmReport {
+            divisor: Some(Integer::from(10007)),
+            curves_run: 4,
+            elapsed_ms: 40,
+            stage_one_ms: 25,
+            stage_two_ms: 10,
+            end_digits: 17,
+            end_curve: 15,
+        };
+        let won = super::combine_ecm_reports(first, second);
+        assert_eq!(won.divisor, Some(Integer::from(10007)));
+        assert_eq!(won.curves_run, 14);
+        assert_eq!(won.elapsed_ms, 160);
+        assert_eq!(won.stage_one_ms, 105);
+        assert_eq!(won.stage_two_ms, 40);
+        assert_eq!(won.end_digits, 17);
+        assert_eq!(won.end_curve, 15);
+        let fallback = super::combine_ecm_reports(
+            crate::ecm::EcmReport {
+                divisor: Some(Integer::from(101)),
+                curves_run: 10,
+                elapsed_ms: 120,
+                stage_one_ms: 80,
+                stage_two_ms: 30,
+                end_digits: 12,
+                end_curve: 11,
+            },
+            crate::ecm::EcmReport {
+                divisor: None,
+                curves_run: 6,
+                elapsed_ms: 60,
+                stage_one_ms: 40,
+                stage_two_ms: 15,
+                end_digits: 17,
+                end_curve: 17,
+            },
+        );
+        assert_eq!(fallback.divisor, Some(Integer::from(101)));
+        assert_eq!(fallback.curves_run, 16);
+        assert_eq!(fallback.elapsed_ms, 180);
+        assert_eq!(fallback.end_digits, 17);
+        assert_eq!(fallback.end_curve, 17);
+    }
 }
