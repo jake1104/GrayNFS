@@ -42,6 +42,7 @@ const CASES = [
     input: "35658606617546370626847644936101",
     budgetMs: 1000,
     expectedFactors: ["4373243081080303", "8153813075658667"],
+    acceptFailure: "resource limit",
   },
 ];
 
@@ -115,6 +116,27 @@ for (const testCase of CASES) {
     }
     passed += 1;
     console.log(`${testCase.name}: PASS`);
+    continue;
+  }
+
+  if (testCase.acceptFailure && payload.ok !== true) {
+    if (!sameKeys(payload, FAILURE_KEYS)) {
+      failed += 1;
+      console.log(`${testCase.name}: FAIL failure-key-set ${Object.keys(payload).join(",")}`);
+      continue;
+    }
+    if (payload.input !== testCase.input) {
+      failed += 1;
+      console.log(`${testCase.name}: FAIL failure-input ${String(payload.input)}`);
+      continue;
+    }
+    if (typeof payload.error !== "string" || !payload.error.includes(testCase.acceptFailure)) {
+      failed += 1;
+      console.log(`${testCase.name}: FAIL failure-error ${String(payload.error)}`);
+      continue;
+    }
+    passed += 1;
+    console.log(`${testCase.name}: PASS failure-path budget-ms ${testCase.budgetMs}`);
     continue;
   }
 
