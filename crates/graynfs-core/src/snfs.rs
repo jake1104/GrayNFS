@@ -501,6 +501,95 @@ mod tests {
     }
 
     #[test]
+    fn large_corpus_entries_pass_production_gates() {
+        let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("..")
+            .join("..")
+            .join("bench")
+            .join("snfs")
+            .join("corpus-large.json");
+        let text = std::fs::read_to_string(&path).expect("bench snfs corpus-large.json readable");
+        let document: serde_json::Value =
+            serde_json::from_str(&text).expect("corpus-large.json parses");
+        let entries = document["entries"].as_array().expect("entries array");
+        assert!(entries.len() >= 6);
+        let mut degrees = std::collections::HashSet::new();
+        let mut signs = std::collections::HashSet::new();
+        let mut unit_coefficient = false;
+        let mut multi_coefficient = false;
+        for entry in entries {
+            let a = entry["a"].as_u64().expect("a");
+            let b = entry["b"].as_u64().expect("b");
+            let k = entry["k"].as_u64().expect("k") as u32;
+            let sign = entry["sign"].as_i64().expect("sign") as i8;
+            let bits = entry["bits"].as_u64().expect("bits");
+            assert!((60..=100).contains(&bits));
+            let n = crate::factor::parse_decimal(entry["n"].as_str().expect("n")).expect("valid n");
+            assert_eq!(n.bits(), bits);
+            let form = SnfsForm::new(a, b, k, 1, sign);
+            assert!(is_snfs_eligible(&form));
+            let built = snfs_polynomial(&form).expect("eligible form builds");
+            assert_eq!(built.field.degree, k as usize);
+            assert_eq!(
+                built.root,
+                Integer::from(a) * Integer::from(b),
+                "root m == a*b"
+            );
+            let scale = Integer::from(a).pow(k - 1);
+            assert_eq!(built.field.polynomial[k as usize], Integer::from(1));
+            for index in 1..k as usize {
+                assert!(built.field.polynomial[index].is_zero());
+            }
+            let expected_constant = if sign == 1 {
+                scale.clone()
+            } else {
+                -scale.clone()
+            };
+            assert_eq!(built.field.polynomial[0], expected_constant);
+            assert!(snfs_binomial_irreducible(
+                k as usize,
+                &built.field.polynomial[0]
+            ));
+            let candidate = PolynomialPair {
+                degree: k as usize,
+                coefficients: built.field.polynomial.clone(),
+                m: built.root.clone(),
+            };
+            let value = evaluate(&candidate.coefficients, &candidate.m);
+            assert_eq!(value, &scale * &n, "scaled identity f(m) == a^(k-1)*N");
+            assert!((value % &n).is_zero(), "f(m) mod N == 0");
+            let preset = snfs_preset_for(&n, k as usize).expect("production preset promotes");
+            assert!(crate::general::snfs_binomial_shape(&preset.polynomial));
+            for (key, expected) in [
+                ("eligible", true),
+                ("scaled_identity", true),
+                ("mod_zero", true),
+                ("binomial_irreducible", true),
+                ("preset_promotes", true),
+                ("binomial_shape", true),
+            ] {
+                assert_eq!(entry["gates"][key], expected, "recorded gate {key}");
+            }
+            let mut product = Integer::from(1);
+            for factor in entry["factors"].as_array().expect("factors array") {
+                let prime = crate::factor::parse_decimal(factor.as_str().expect("factor"))
+                    .expect("valid factor");
+                product *= &prime;
+            }
+            assert_eq!(product, n, "recorded factors multiply to N");
+            degrees.insert(k);
+            signs.insert(sign);
+            unit_coefficient |= a == 1;
+            multi_coefficient |= a > 1;
+        }
+        for degree in [3_u32, 4, 5] {
+            assert!(degrees.contains(&degree), "missing degree {degree}");
+        }
+        assert!(signs.contains(&1_i8) && signs.contains(&-1_i8));
+        assert!(unit_coefficient && multi_coefficient);
+    }
+
+    #[test]
     fn e2e_snfs_true_path_and_false_parity() {
         let expected = [
             vec!["3", "23", "29"],

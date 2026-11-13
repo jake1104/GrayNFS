@@ -1,0 +1,473 @@
+{
+  "note": "Large SNFS special-form corpus for the v0.2.6.1 same-budget showdown. Every kept entry passes is_snfs_eligible, the scaled identity f(m)==a^{k-1}*N, f(m) mod N==0, scoped Capelli irreducibility, and the production preset (snfs_preset_for promotes, binomial shape scopes the unit-index gate). Factors are complete (sympy factorint, every factor prime-checked, products verified).",
+  "entry_conditions": [
+    "is_snfs_eligible",
+    "scaled_identity f(m)==a^{k-1}*N",
+    "f(m) mod N==0",
+    "scoped Capelli irreducibility (snfs_binomial_irreducible)",
+    "production preset promotes (snfs_preset_for is Some; binomial shape scopes unit-index)"
+  ],
+  "entries": [
+    {
+      "slot": "E1",
+      "a": 2,
+      "b": 999983,
+      "k": 3,
+      "degree": 3,
+      "c": 1,
+      "sign": 1,
+      "n": "1999898001733990175",
+      "bits": 61,
+      "m": "1999966",
+      "scale": "4",
+      "constant": "4",
+      "coefficients": [
+        "4",
+        "0",
+        "0",
+        "1"
+      ],
+      "f_of_m": "7999592006935960700",
+      "gates": {
+        "eligible": true,
+        "scaled_identity": true,
+        "mod_zero": true,
+        "binomial_irreducible": true,
+        "preset_promotes": true,
+        "binomial_shape": true
+      },
+      "raw": {
+        "classify_irreducibility": "Accepted",
+        "has_unit_index": false,
+        "note": "raw has_unit_index is false for every kept binomial (discriminant shares a factor with {2..29} via k in {3,4,5}); production preset scopes the unit-index gate for binomial shape (abs-norm handling in general.rs)"
+      },
+      "factors": [
+        "261637",
+        "305751556811",
+        "5",
+        "5"
+      ]
+    },
+    {
+      "slot": "E2",
+      "a": 3,
+      "b": 999979,
+      "k": 3,
+      "degree": 3,
+      "c": 1,
+      "sign": -1,
+      "n": "2999811003968972216",
+      "bits": 62,
+      "m": "2999937",
+      "scale": "9",
+      "constant": "-9",
+      "coefficients": [
+        "-9",
+        "0",
+        "0",
+        "1"
+      ],
+      "f_of_m": "26998299035720749944",
+      "gates": {
+        "eligible": true,
+        "scaled_identity": true,
+        "mod_zero": true,
+        "binomial_irreducible": true,
+        "preset_promotes": true,
+        "binomial_shape": true
+      },
+      "raw": {
+        "classify_irreducibility": "Accepted",
+        "has_unit_index": false,
+        "note": "raw has_unit_index is false for every kept binomial (discriminant shares a factor with {2..29} via k in {3,4,5}); production preset scopes the unit-index gate for binomial shape (abs-norm handling in general.rs)"
+      },
+      "factors": [
+        "17",
+        "2",
+        "2",
+        "2",
+        "266945387",
+        "82629013"
+      ]
+    },
+    {
+      "slot": "E3",
+      "a": 1,
+      "b": 200000,
+      "k": 4,
+      "degree": 4,
+      "c": 1,
+      "sign": 1,
+      "n": "1600000000000000000001",
+      "bits": 71,
+      "m": "200000",
+      "scale": "1",
+      "constant": "1",
+      "coefficients": [
+        "1",
+        "0",
+        "0",
+        "0",
+        "1"
+      ],
+      "f_of_m": "1600000000000000000001",
+      "gates": {
+        "eligible": true,
+        "scaled_identity": true,
+        "mod_zero": true,
+        "binomial_irreducible": true,
+        "preset_promotes": true,
+        "binomial_shape": true
+      },
+      "raw": {
+        "classify_irreducibility": "Rejected",
+        "has_unit_index": false,
+        "note": "generic mod-prime classifier rejects x^4+1 (splits mod every prime); scoped Capelli accepts and the production preset promotes"
+      },
+      "factors": [
+        "10676506633417",
+        "241",
+        "621833"
+      ]
+    },
+    {
+      "slot": "E4",
+      "a": 3,
+      "b": 200003,
+      "k": 4,
+      "degree": 4,
+      "c": 1,
+      "sign": -1,
+      "n": "4800288006480064800242",
+      "bits": 73,
+      "m": "600009",
+      "scale": "27",
+      "constant": "-27",
+      "coefficients": [
+        "-27",
+        "0",
+        "0",
+        "0",
+        "1"
+      ],
+      "f_of_m": "129607776174961749606534",
+      "gates": {
+        "eligible": true,
+        "scaled_identity": true,
+        "mod_zero": true,
+        "binomial_irreducible": true,
+        "preset_promotes": true,
+        "binomial_shape": true
+      },
+      "raw": {
+        "classify_irreducibility": "Accepted",
+        "has_unit_index": false,
+        "note": "raw has_unit_index is false for every kept binomial (discriminant shares a factor with {2..29} via k in {3,4,5}); production preset scopes the unit-index gate for binomial shape (abs-norm handling in general.rs)"
+      },
+      "factors": [
+        "2",
+        "2400144003240032400121"
+      ]
+    },
+    {
+      "slot": "E5",
+      "a": 2,
+      "b": 100000,
+      "k": 5,
+      "degree": 5,
+      "c": 1,
+      "sign": 1,
+      "n": "20000000000000000000000001",
+      "bits": 85,
+      "m": "200000",
+      "scale": "16",
+      "constant": "16",
+      "coefficients": [
+        "16",
+        "0",
+        "0",
+        "0",
+        "0",
+        "1"
+      ],
+      "f_of_m": "320000000000000000000000016",
+      "gates": {
+        "eligible": true,
+        "scaled_identity": true,
+        "mod_zero": true,
+        "binomial_irreducible": true,
+        "preset_promotes": true,
+        "binomial_shape": true
+      },
+      "raw": {
+        "classify_irreducibility": "Accepted",
+        "has_unit_index": false,
+        "note": "raw has_unit_index is false for every kept binomial (discriminant shares a factor with {2..29} via k in {3,4,5}); production preset scopes the unit-index gate for binomial shape (abs-norm handling in general.rs)"
+      },
+      "factors": [
+        "23",
+        "269",
+        "3",
+        "34490834173775801",
+        "4463",
+        "7"
+      ]
+    },
+    {
+      "slot": "E6",
+      "a": 2,
+      "b": 100003,
+      "k": 5,
+      "degree": 5,
+      "c": 1,
+      "sign": -1,
+      "n": "20003000180005400081000485",
+      "bits": 85,
+      "m": "200006",
+      "scale": "16",
+      "constant": "-16",
+      "coefficients": [
+        "-16",
+        "0",
+        "0",
+        "0",
+        "0",
+        "1"
+      ],
+      "f_of_m": "320048002880086401296007760",
+      "gates": {
+        "eligible": true,
+        "scaled_identity": true,
+        "mod_zero": true,
+        "binomial_irreducible": true,
+        "preset_promotes": true,
+        "binomial_shape": true
+      },
+      "raw": {
+        "classify_irreducibility": "Accepted",
+        "has_unit_index": false,
+        "note": "raw has_unit_index is false for every kept binomial (discriminant shares a factor with {2..29} via k in {3,4,5}); production preset scopes the unit-index gate for binomial shape (abs-norm handling in general.rs)"
+      },
+      "factors": [
+        "1588511",
+        "19855629947",
+        "241",
+        "5",
+        "617",
+        "853"
+      ]
+    },
+    {
+      "slot": "E7",
+      "a": 3,
+      "b": 500000,
+      "k": 5,
+      "degree": 5,
+      "c": 1,
+      "sign": 1,
+      "n": "93750000000000000000000000001",
+      "bits": 97,
+      "m": "1500000",
+      "scale": "81",
+      "constant": "81",
+      "coefficients": [
+        "81",
+        "0",
+        "0",
+        "0",
+        "0",
+        "1"
+      ],
+      "f_of_m": "7593750000000000000000000000081",
+      "gates": {
+        "eligible": true,
+        "scaled_identity": true,
+        "mod_zero": true,
+        "binomial_irreducible": true,
+        "preset_promotes": true,
+        "binomial_shape": true
+      },
+      "raw": {
+        "classify_irreducibility": "Accepted",
+        "has_unit_index": false,
+        "note": "raw has_unit_index is false for every kept binomial (discriminant shares a factor with {2..29} via k in {3,4,5}); production preset scopes the unit-index gate for binomial shape (abs-norm handling in general.rs)"
+      },
+      "factors": [
+        "100117273",
+        "337",
+        "396948644957354143",
+        "7"
+      ]
+    },
+    {
+      "slot": "E8",
+      "a": 5,
+      "b": 900000,
+      "k": 4,
+      "degree": 4,
+      "c": 1,
+      "sign": 1,
+      "n": "3280500000000000000000001",
+      "bits": 82,
+      "m": "4500000",
+      "scale": "125",
+      "constant": "125",
+      "coefficients": [
+        "125",
+        "0",
+        "0",
+        "0",
+        "1"
+      ],
+      "f_of_m": "410062500000000000000000125",
+      "gates": {
+        "eligible": true,
+        "scaled_identity": true,
+        "mod_zero": true,
+        "binomial_irreducible": true,
+        "preset_promotes": true,
+        "binomial_shape": true
+      },
+      "raw": {
+        "classify_irreducibility": "Accepted",
+        "has_unit_index": false,
+        "note": "raw has_unit_index is false for every kept binomial (discriminant shares a factor with {2..29} via k in {3,4,5}); production preset scopes the unit-index gate for binomial shape (abs-norm handling in general.rs)"
+      },
+      "factors": [
+        "12931289344743719623",
+        "36241",
+        "7"
+      ]
+    }
+  ],
+  "exclusions": [
+    {
+      "a": 1,
+      "b": 999983,
+      "k": 3,
+      "c": 1,
+      "sign": 1,
+      "n": "999949000866995088",
+      "bits": 60,
+      "gates": {
+        "eligible": true,
+        "scaled_identity": true,
+        "mod_zero": true,
+        "binomial_irreducible": false
+      },
+      "reason": "reducible: scale 1 is a perfect cube (Capelli p=3)"
+    },
+    {
+      "a": 8,
+      "b": 999983,
+      "k": 3,
+      "c": 1,
+      "sign": 1,
+      "n": "7999592006935960697",
+      "bits": 63,
+      "gates": {
+        "eligible": true,
+        "scaled_identity": true,
+        "mod_zero": true,
+        "binomial_irreducible": false
+      },
+      "reason": "reducible: scale 64 is a perfect cube (a=8 is a cube)"
+    },
+    {
+      "a": 1,
+      "b": 100000,
+      "k": 5,
+      "c": 1,
+      "sign": 1,
+      "n": "10000000000000000000000001",
+      "bits": 84,
+      "gates": {
+        "eligible": true,
+        "scaled_identity": true,
+        "mod_zero": true,
+        "binomial_irreducible": false
+      },
+      "reason": "reducible: scale 1 is a perfect fifth power"
+    },
+    {
+      "a": 1,
+      "b": 100000,
+      "k": 5,
+      "c": 1,
+      "sign": -1,
+      "n": "9999999999999999999999999",
+      "bits": 84,
+      "gates": {
+        "eligible": true,
+        "scaled_identity": true,
+        "mod_zero": true,
+        "binomial_irreducible": false
+      },
+      "reason": "reducible: scale 1 is a perfect fifth power"
+    },
+    {
+      "a": 4,
+      "b": 200000,
+      "k": 4,
+      "c": 1,
+      "sign": -1,
+      "n": "6399999999999999999999",
+      "bits": 73,
+      "gates": {
+        "eligible": true,
+        "scaled_identity": true,
+        "mod_zero": true,
+        "binomial_irreducible": false
+      },
+      "reason": "reducible: scale 64 is a perfect square (a=4 is a square)"
+    },
+    {
+      "a": 17,
+      "b": 100,
+      "k": 3,
+      "c": 1,
+      "sign": 1,
+      "n": "17000001",
+      "bits": 25,
+      "gates": {
+        "eligible": false,
+        "scaled_identity": true,
+        "mod_zero": true,
+        "binomial_irreducible": true
+      },
+      "reason": "ineligible: a=17 above the 1..16 bound"
+    },
+    {
+      "a": 2,
+      "b": 1000001,
+      "k": 3,
+      "c": 1,
+      "sign": 1,
+      "n": "2000006000006000003",
+      "bits": 61,
+      "gates": {
+        "eligible": false,
+        "scaled_identity": true,
+        "mod_zero": true,
+        "binomial_irreducible": true
+      },
+      "reason": "ineligible: b=1000001 above the 2..1000000 bound"
+    },
+    {
+      "a": 3,
+      "b": 999906,
+      "k": 3,
+      "c": 1,
+      "sign": -1,
+      "n": "2999154079521508247",
+      "bits": 62,
+      "gates": {
+        "eligible": true,
+        "scaled_identity": true,
+        "mod_zero": true,
+        "binomial_irreducible": true
+      },
+      "reason": "prime input passes every gate but is unsuitable for a factor-race corpus (never force-fitted)"
+    }
+  ]
+}
