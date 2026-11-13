@@ -20,7 +20,7 @@ clean failure; `low_weight`-only detections never promote.
   (`is_snfs_eligible`, scaled identity `f(m) == a^(k-1) * N` with
   `f(m) mod N == 0`, scoped irreducibility); exclusions are recorded, never
   force-fitted. Flags: `--skip-preprocessing --threads 1`, 120 s budget.
-- `results-large.json`: v0.2.6.1.2 same-budget showdown over the large corpus
+- `results-large.json`: v0.2.5.7.2 same-budget showdown over the large corpus
   (same input, same 120 s budget, same default seed; SNFS preset vs generic
   `--no-snfs`; forced entry degree; 3 reps per arm; 48 runs total). Verdict:
   NO-GO (0 SNFS / 1 generic / 7 voided; bar was SNFS advantage on a majority

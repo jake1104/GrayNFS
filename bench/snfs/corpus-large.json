@@ -1,5 +1,5 @@
 {
-  "note": "Large SNFS special-form corpus for the v0.2.6.1 same-budget showdown. Every kept entry passes is_snfs_eligible, the scaled identity f(m)==a^{k-1}*N, f(m) mod N==0, scoped Capelli irreducibility, and the production preset (snfs_preset_for promotes, binomial shape scopes the unit-index gate). Factors are complete (sympy factorint, every factor prime-checked, products verified).",
+  "note": "Large SNFS special-form corpus for the v0.2.5.7 same-budget showdown. Every kept entry passes is_snfs_eligible, the scaled identity f(m)==a^{k-1}*N, f(m) mod N==0, scoped Capelli irreducibility, and the production preset (snfs_preset_for promotes, binomial shape scopes the unit-index gate). Factors are complete (sympy factorint, every factor prime-checked, products verified).",
   "entry_conditions": [
     "is_snfs_eligible",
     "scaled_identity f(m)==a^{k-1}*N",

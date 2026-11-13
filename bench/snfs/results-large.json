@@ -1,5 +1,5 @@
 {
-  "note": "v0.2.6.1.2 same-budget showdown FINAL (round 1 of max 2; round 2 declined as inconclusive-proof: 0 SNFS wins makes majority unreachable). Same input, same 120 s budget, same default seed; SNFS preset arm vs generic (--no-snfs) arm; flags --skip-preprocessing --threads 1, forced entry degree, 3 reps per arm, sequential STOP/load-gated via scripts/nice_run.ps1 (BelowNormal). method stays gnfs-family on the one decided cell. No substitute inputs: all 7 voided cells fail on BOTH arms with the same systematic wall (relation deadline / collect memory), not input-specific flukes.",
+  "note": "v0.2.5.7.2 same-budget showdown FINAL (round 1 of max 2; round 2 declined as inconclusive-proof: 0 SNFS wins makes majority unreachable). Same input, same 120 s budget, same default seed; SNFS preset arm vs generic (--no-snfs) arm; flags --skip-preprocessing --threads 1, forced entry degree, 3 reps per arm, sequential STOP/load-gated via scripts/nice_run.ps1 (BelowNormal). method stays gnfs-family on the one decided cell. No substitute inputs: all 7 voided cells fail on BOTH arms with the same systematic wall (relation deadline / collect memory), not input-specific flukes.",
   "budget_seconds": 120,
   "threads": 1,
   "reps": 3,

@@ -430,7 +430,7 @@ graph LR
 
 | crate | role |
 | :---- | :--- |
-| `graynfs-core` | GNFS implementation (SIQS degree 2 with QS fallback, GNFS degrees 3-5 as one engine) with trial division, Fermat, p-1/p+1, ECM front stages, preprocessing, sieving, F2 linear algebra, algebraic square root, record-only SNFS special-form detector (small-special-form path only: large 61-97 bit forms show usable-relation starvation at equal budget, v0.2.6.1.2 NO-GO 0 SNFS / 1 generic / 7 voided over 48 runs, see `bench/snfs/results-large.json`) |
+| `graynfs-core` | GNFS implementation (SIQS degree 2 with QS fallback, GNFS degrees 3-5 as one engine) with trial division, Fermat, p-1/p+1, ECM front stages, preprocessing, sieving, F2 linear algebra, algebraic square root, record-only SNFS special-form detector (small-special-form path only: large 61-97 bit forms show usable-relation starvation at equal budget, v0.2.5.7.2 NO-GO 0 SNFS / 1 generic / 7 voided over 48 runs, see `bench/snfs/results-large.json`) |
 | `graynfs-cli` | `graynfs <N>` command-line front end |
 | `graynfs-py` | PyO3 extension module exposed as the `graynfs` Python package |
 | `graynfs-bench` | benchmark tiers with per-case deadlines and JSON output |
