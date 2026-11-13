@@ -5,6 +5,7 @@ pub mod cascade;
 pub mod checkpoint;
 pub mod cubic;
 pub mod ecm;
+pub mod ecpp;
 pub mod error;
 pub mod factor;
 pub mod field;
@@ -29,6 +30,10 @@ pub mod time;
 
 pub use checkpoint::{
     CHECKPOINT_VERSION, CheckpointPayload, load_gnfs_checkpoint, save_gnfs_checkpoint,
+};
+pub use ecpp::{
+    EcppCertificate, EcppLevel, certificate_to_json, prove_ecpp, verify_ecpp_certificate,
+    verify_ecpp_json,
 };
 pub use error::FactorError;
 pub use factor::{
