@@ -309,8 +309,14 @@ mod tests {
                 built.field.polynomial[entry.form.k as usize],
                 Integer::from(1)
             );
-            for index in 1..entry.form.k as usize {
-                assert!(built.field.polynomial[index].is_zero());
+            for coefficient in built
+                .field
+                .polynomial
+                .iter()
+                .take(entry.form.k as usize)
+                .skip(1)
+            {
+                assert!(coefficient.is_zero());
             }
             let scale = Integer::from(entry.form.a).pow(entry.form.k - 1);
             let expected_constant = if entry.form.sign == 1 {
@@ -537,8 +543,8 @@ mod tests {
             );
             let scale = Integer::from(a).pow(k - 1);
             assert_eq!(built.field.polynomial[k as usize], Integer::from(1));
-            for index in 1..k as usize {
-                assert!(built.field.polynomial[index].is_zero());
+            for coefficient in built.field.polynomial.iter().take(k as usize).skip(1) {
+                assert!(coefficient.is_zero());
             }
             let expected_constant = if sign == 1 {
                 scale.clone()
