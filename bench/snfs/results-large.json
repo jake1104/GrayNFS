@@ -1,0 +1,1250 @@
+{
+  "note": "v0.2.6.1.2 same-budget showdown FINAL (round 1 of max 2; round 2 declined as inconclusive-proof: 0 SNFS wins makes majority unreachable). Same input, same 120 s budget, same default seed; SNFS preset arm vs generic (--no-snfs) arm; flags --skip-preprocessing --threads 1, forced entry degree, 3 reps per arm, sequential STOP/load-gated via scripts/nice_run.ps1 (BelowNormal). method stays gnfs-family on the one decided cell. No substitute inputs: all 7 voided cells fail on BOTH arms with the same systematic wall (relation deadline / collect memory), not input-specific flukes.",
+  "budget_seconds": 120,
+  "threads": 1,
+  "reps": 3,
+  "flags": "--skip-preprocessing --threads 1",
+  "rows": [
+    {
+      "slot": "E1",
+      "n": "1999898001733990175",
+      "bits": 61,
+      "degree": 3,
+      "snfs": true,
+      "rep": 1,
+      "exit_code": 1,
+      "elapsed_ms": null,
+      "wall_ms": 122433.0,
+      "factors": [],
+      "method": null,
+      "relations": null,
+      "rank": null,
+      "polynomial": null,
+      "error": {
+        "category": "resource-limit",
+        "detail": "general relation deadline exceeded"
+      },
+      "product_ok": false
+    },
+    {
+      "slot": "E1",
+      "n": "1999898001733990175",
+      "bits": 61,
+      "degree": 3,
+      "snfs": true,
+      "rep": 2,
+      "exit_code": 1,
+      "elapsed_ms": null,
+      "wall_ms": 121646.5,
+      "factors": [],
+      "method": null,
+      "relations": null,
+      "rank": null,
+      "polynomial": null,
+      "error": {
+        "category": "resource-limit",
+        "detail": "general relation deadline exceeded"
+      },
+      "product_ok": false
+    },
+    {
+      "slot": "E1",
+      "n": "1999898001733990175",
+      "bits": 61,
+      "degree": 3,
+      "snfs": true,
+      "rep": 3,
+      "exit_code": 1,
+      "elapsed_ms": null,
+      "wall_ms": 121767.1,
+      "factors": [],
+      "method": null,
+      "relations": null,
+      "rank": null,
+      "polynomial": null,
+      "error": {
+        "category": "resource-limit",
+        "detail": "general relation deadline exceeded"
+      },
+      "product_ok": false
+    },
+    {
+      "slot": "E1",
+      "n": "1999898001733990175",
+      "bits": 61,
+      "degree": 3,
+      "snfs": false,
+      "rep": 1,
+      "exit_code": 0,
+      "elapsed_ms": 44239,
+      "wall_ms": 45835.2,
+      "factors": [
+        "5",
+        "5",
+        "261637",
+        "305751556811"
+      ],
+      "method": "gnfs+perfect_square+prime",
+      "relations": 3829,
+      "rank": 2540,
+      "polynomial": "x^3 + 1418615891386 with root 1259899 modulo N",
+      "error": null,
+      "product_ok": true
+    },
+    {
+      "slot": "E1",
+      "n": "1999898001733990175",
+      "bits": 61,
+      "degree": 3,
+      "snfs": false,
+      "rep": 2,
+      "exit_code": 0,
+      "elapsed_ms": 42111,
+      "wall_ms": 43929.8,
+      "factors": [
+        "5",
+        "5",
+        "261637",
+        "305751556811"
+      ],
+      "method": "gnfs+perfect_square+prime",
+      "relations": 3829,
+      "rank": 2540,
+      "polynomial": "x^3 + 1418615891386 with root 1259899 modulo N",
+      "error": null,
+      "product_ok": true
+    },
+    {
+      "slot": "E1",
+      "n": "1999898001733990175",
+      "bits": 61,
+      "degree": 3,
+      "snfs": false,
+      "rep": 3,
+      "exit_code": 0,
+      "elapsed_ms": 41757,
+      "wall_ms": 43426.1,
+      "factors": [
+        "5",
+        "5",
+        "261637",
+        "305751556811"
+      ],
+      "method": "gnfs+perfect_square+prime",
+      "relations": 3829,
+      "rank": 2540,
+      "polynomial": "x^3 + 1418615891386 with root 1259899 modulo N",
+      "error": null,
+      "product_ok": true
+    },
+    {
+      "slot": "E2",
+      "n": "2999811003968972216",
+      "bits": 62,
+      "degree": 3,
+      "snfs": true,
+      "rep": 1,
+      "exit_code": 1,
+      "elapsed_ms": null,
+      "wall_ms": 121570.4,
+      "factors": [],
+      "method": null,
+      "relations": null,
+      "rank": null,
+      "polynomial": null,
+      "error": {
+        "category": "resource-limit",
+        "detail": "general relation deadline exceeded"
+      },
+      "product_ok": false
+    },
+    {
+      "slot": "E2",
+      "n": "2999811003968972216",
+      "bits": 62,
+      "degree": 3,
+      "snfs": true,
+      "rep": 2,
+      "exit_code": 1,
+      "elapsed_ms": null,
+      "wall_ms": 121705.5,
+      "factors": [],
+      "method": null,
+      "relations": null,
+      "rank": null,
+      "polynomial": null,
+      "error": {
+        "category": "resource-limit",
+        "detail": "general relation deadline exceeded"
+      },
+      "product_ok": false
+    },
+    {
+      "slot": "E2",
+      "n": "2999811003968972216",
+      "bits": 62,
+      "degree": 3,
+      "snfs": true,
+      "rep": 3,
+      "exit_code": 1,
+      "elapsed_ms": null,
+      "wall_ms": 121736.8,
+      "factors": [],
+      "method": null,
+      "relations": null,
+      "rank": null,
+      "polynomial": null,
+      "error": {
+        "category": "resource-limit",
+        "detail": "general relation deadline exceeded"
+      },
+      "product_ok": false
+    },
+    {
+      "slot": "E2",
+      "n": "2999811003968972216",
+      "bits": 62,
+      "degree": 3,
+      "snfs": false,
+      "rep": 1,
+      "exit_code": 1,
+      "elapsed_ms": null,
+      "wall_ms": 121562.6,
+      "factors": [],
+      "method": null,
+      "relations": null,
+      "rank": null,
+      "polynomial": null,
+      "error": {
+        "category": "resource-limit",
+        "detail": "general relation deadline exceeded"
+      },
+      "product_ok": false
+    },
+    {
+      "slot": "E2",
+      "n": "2999811003968972216",
+      "bits": 62,
+      "degree": 3,
+      "snfs": false,
+      "rep": 2,
+      "exit_code": 1,
+      "elapsed_ms": null,
+      "wall_ms": 121670.9,
+      "factors": [],
+      "method": null,
+      "relations": null,
+      "rank": null,
+      "polynomial": null,
+      "error": {
+        "category": "resource-limit",
+        "detail": "general relation deadline exceeded"
+      },
+      "product_ok": false
+    },
+    {
+      "slot": "E2",
+      "n": "2999811003968972216",
+      "bits": 62,
+      "degree": 3,
+      "snfs": false,
+      "rep": 3,
+      "exit_code": 1,
+      "elapsed_ms": null,
+      "wall_ms": 121653.5,
+      "factors": [],
+      "method": null,
+      "relations": null,
+      "rank": null,
+      "polynomial": null,
+      "error": {
+        "category": "resource-limit",
+        "detail": "general relation deadline exceeded"
+      },
+      "product_ok": false
+    },
+    {
+      "slot": "E3",
+      "n": "1600000000000000000001",
+      "bits": 71,
+      "degree": 4,
+      "snfs": true,
+      "rep": 1,
+      "exit_code": 1,
+      "elapsed_ms": null,
+      "wall_ms": 121888.5,
+      "factors": [],
+      "method": null,
+      "relations": null,
+      "rank": null,
+      "polynomial": null,
+      "error": {
+        "category": "resource-limit",
+        "detail": "general relation deadline exceeded"
+      },
+      "product_ok": false
+    },
+    {
+      "slot": "E3",
+      "n": "1600000000000000000001",
+      "bits": 71,
+      "degree": 4,
+      "snfs": true,
+      "rep": 2,
+      "exit_code": 1,
+      "elapsed_ms": null,
+      "wall_ms": 121808.6,
+      "factors": [],
+      "method": null,
+      "relations": null,
+      "rank": null,
+      "polynomial": null,
+      "error": {
+        "category": "resource-limit",
+        "detail": "general relation deadline exceeded"
+      },
+      "product_ok": false
+    },
+    {
+      "slot": "E3",
+      "n": "1600000000000000000001",
+      "bits": 71,
+      "degree": 4,
+      "snfs": true,
+      "rep": 3,
+      "exit_code": 1,
+      "elapsed_ms": null,
+      "wall_ms": 121631.6,
+      "factors": [],
+      "method": null,
+      "relations": null,
+      "rank": null,
+      "polynomial": null,
+      "error": {
+        "category": "resource-limit",
+        "detail": "general relation deadline exceeded"
+      },
+      "product_ok": false
+    },
+    {
+      "slot": "E3",
+      "n": "1600000000000000000001",
+      "bits": 71,
+      "degree": 4,
+      "snfs": false,
+      "rep": 1,
+      "exit_code": 1,
+      "elapsed_ms": null,
+      "wall_ms": 121802.8,
+      "factors": [],
+      "method": null,
+      "relations": null,
+      "rank": null,
+      "polynomial": null,
+      "error": {
+        "category": "resource-limit",
+        "detail": "general relation deadline exceeded"
+      },
+      "product_ok": false
+    },
+    {
+      "slot": "E3",
+      "n": "1600000000000000000001",
+      "bits": 71,
+      "degree": 4,
+      "snfs": false,
+      "rep": 2,
+      "exit_code": 1,
+      "elapsed_ms": null,
+      "wall_ms": 122232.2,
+      "factors": [],
+      "method": null,
+      "relations": null,
+      "rank": null,
+      "polynomial": null,
+      "error": {
+        "category": "resource-limit",
+        "detail": "general relation deadline exceeded"
+      },
+      "product_ok": false
+    },
+    {
+      "slot": "E3",
+      "n": "1600000000000000000001",
+      "bits": 71,
+      "degree": 4,
+      "snfs": false,
+      "rep": 3,
+      "exit_code": 1,
+      "elapsed_ms": null,
+      "wall_ms": 121976.7,
+      "factors": [],
+      "method": null,
+      "relations": null,
+      "rank": null,
+      "polynomial": null,
+      "error": {
+        "category": "resource-limit",
+        "detail": "general relation deadline exceeded"
+      },
+      "product_ok": false
+    },
+    {
+      "slot": "E4",
+      "n": "4800288006480064800242",
+      "bits": 73,
+      "degree": 4,
+      "snfs": true,
+      "rep": 1,
+      "exit_code": 1,
+      "elapsed_ms": null,
+      "wall_ms": 121982.1,
+      "factors": [],
+      "method": null,
+      "relations": null,
+      "rank": null,
+      "polynomial": null,
+      "error": {
+        "category": "resource-limit",
+        "detail": "general relation deadline exceeded"
+      },
+      "product_ok": false
+    },
+    {
+      "slot": "E4",
+      "n": "4800288006480064800242",
+      "bits": 73,
+      "degree": 4,
+      "snfs": true,
+      "rep": 2,
+      "exit_code": 1,
+      "elapsed_ms": null,
+      "wall_ms": 121638.9,
+      "factors": [],
+      "method": null,
+      "relations": null,
+      "rank": null,
+      "polynomial": null,
+      "error": {
+        "category": "resource-limit",
+        "detail": "general relation deadline exceeded"
+      },
+      "product_ok": false
+    },
+    {
+      "slot": "E4",
+      "n": "4800288006480064800242",
+      "bits": 73,
+      "degree": 4,
+      "snfs": true,
+      "rep": 3,
+      "exit_code": 1,
+      "elapsed_ms": null,
+      "wall_ms": 121816.4,
+      "factors": [],
+      "method": null,
+      "relations": null,
+      "rank": null,
+      "polynomial": null,
+      "error": {
+        "category": "resource-limit",
+        "detail": "general relation deadline exceeded"
+      },
+      "product_ok": false
+    },
+    {
+      "slot": "E4",
+      "n": "4800288006480064800242",
+      "bits": 73,
+      "degree": 4,
+      "snfs": false,
+      "rep": 1,
+      "exit_code": 1,
+      "elapsed_ms": null,
+      "wall_ms": 71818.7,
+      "factors": [],
+      "method": null,
+      "relations": null,
+      "rank": null,
+      "polynomial": null,
+      "error": {
+        "category": "resource-limit",
+        "detail": "relation collection exceeded the memory budget of 1024 MiB (live estimate 1025 MiB)"
+      },
+      "product_ok": false
+    },
+    {
+      "slot": "E4",
+      "n": "4800288006480064800242",
+      "bits": 73,
+      "degree": 4,
+      "snfs": false,
+      "rep": 2,
+      "exit_code": 1,
+      "elapsed_ms": null,
+      "wall_ms": 71293.6,
+      "factors": [],
+      "method": null,
+      "relations": null,
+      "rank": null,
+      "polynomial": null,
+      "error": {
+        "category": "resource-limit",
+        "detail": "relation collection exceeded the memory budget of 1024 MiB (live estimate 1025 MiB)"
+      },
+      "product_ok": false
+    },
+    {
+      "slot": "E4",
+      "n": "4800288006480064800242",
+      "bits": 73,
+      "degree": 4,
+      "snfs": false,
+      "rep": 3,
+      "exit_code": 1,
+      "elapsed_ms": null,
+      "wall_ms": 73217.7,
+      "factors": [],
+      "method": null,
+      "relations": null,
+      "rank": null,
+      "polynomial": null,
+      "error": {
+        "category": "resource-limit",
+        "detail": "relation collection exceeded the memory budget of 1024 MiB (live estimate 1025 MiB)"
+      },
+      "product_ok": false
+    },
+    {
+      "slot": "E5",
+      "n": "20000000000000000000000001",
+      "bits": 85,
+      "degree": 5,
+      "snfs": true,
+      "rep": 1,
+      "exit_code": 1,
+      "elapsed_ms": null,
+      "wall_ms": 121620.0,
+      "factors": [],
+      "method": null,
+      "relations": null,
+      "rank": null,
+      "polynomial": null,
+      "error": {
+        "category": "resource-limit",
+        "detail": "general relation deadline exceeded"
+      },
+      "product_ok": false
+    },
+    {
+      "slot": "E5",
+      "n": "20000000000000000000000001",
+      "bits": 85,
+      "degree": 5,
+      "snfs": true,
+      "rep": 2,
+      "exit_code": 1,
+      "elapsed_ms": null,
+      "wall_ms": 121544.2,
+      "factors": [],
+      "method": null,
+      "relations": null,
+      "rank": null,
+      "polynomial": null,
+      "error": {
+        "category": "resource-limit",
+        "detail": "general relation deadline exceeded"
+      },
+      "product_ok": false
+    },
+    {
+      "slot": "E5",
+      "n": "20000000000000000000000001",
+      "bits": 85,
+      "degree": 5,
+      "snfs": true,
+      "rep": 3,
+      "exit_code": 1,
+      "elapsed_ms": null,
+      "wall_ms": 121433.9,
+      "factors": [],
+      "method": null,
+      "relations": null,
+      "rank": null,
+      "polynomial": null,
+      "error": {
+        "category": "resource-limit",
+        "detail": "general relation deadline exceeded"
+      },
+      "product_ok": false
+    },
+    {
+      "slot": "E5",
+      "n": "20000000000000000000000001",
+      "bits": 85,
+      "degree": 5,
+      "snfs": false,
+      "rep": 1,
+      "exit_code": 1,
+      "elapsed_ms": null,
+      "wall_ms": 121498.3,
+      "factors": [],
+      "method": null,
+      "relations": null,
+      "rank": null,
+      "polynomial": null,
+      "error": {
+        "category": "resource-limit",
+        "detail": "general relation deadline exceeded"
+      },
+      "product_ok": false
+    },
+    {
+      "slot": "E5",
+      "n": "20000000000000000000000001",
+      "bits": 85,
+      "degree": 5,
+      "snfs": false,
+      "rep": 2,
+      "exit_code": 1,
+      "elapsed_ms": null,
+      "wall_ms": 121394.1,
+      "factors": [],
+      "method": null,
+      "relations": null,
+      "rank": null,
+      "polynomial": null,
+      "error": {
+        "category": "resource-limit",
+        "detail": "general relation deadline exceeded"
+      },
+      "product_ok": false
+    },
+    {
+      "slot": "E5",
+      "n": "20000000000000000000000001",
+      "bits": 85,
+      "degree": 5,
+      "snfs": false,
+      "rep": 3,
+      "exit_code": 1,
+      "elapsed_ms": null,
+      "wall_ms": 122183.4,
+      "factors": [],
+      "method": null,
+      "relations": null,
+      "rank": null,
+      "polynomial": null,
+      "error": {
+        "category": "resource-limit",
+        "detail": "general relation deadline exceeded"
+      },
+      "product_ok": false
+    },
+    {
+      "slot": "E6",
+      "n": "20003000180005400081000485",
+      "bits": 85,
+      "degree": 5,
+      "snfs": true,
+      "rep": 1,
+      "exit_code": 1,
+      "elapsed_ms": null,
+      "wall_ms": 122110.1,
+      "factors": [],
+      "method": null,
+      "relations": null,
+      "rank": null,
+      "polynomial": null,
+      "error": {
+        "category": "resource-limit",
+        "detail": "general relation deadline exceeded"
+      },
+      "product_ok": false
+    },
+    {
+      "slot": "E6",
+      "n": "20003000180005400081000485",
+      "bits": 85,
+      "degree": 5,
+      "snfs": true,
+      "rep": 2,
+      "exit_code": 1,
+      "elapsed_ms": null,
+      "wall_ms": 122142.0,
+      "factors": [],
+      "method": null,
+      "relations": null,
+      "rank": null,
+      "polynomial": null,
+      "error": {
+        "category": "resource-limit",
+        "detail": "general relation deadline exceeded"
+      },
+      "product_ok": false
+    },
+    {
+      "slot": "E6",
+      "n": "20003000180005400081000485",
+      "bits": 85,
+      "degree": 5,
+      "snfs": true,
+      "rep": 3,
+      "exit_code": 1,
+      "elapsed_ms": null,
+      "wall_ms": 122656.7,
+      "factors": [],
+      "method": null,
+      "relations": null,
+      "rank": null,
+      "polynomial": null,
+      "error": {
+        "category": "resource-limit",
+        "detail": "general relation deadline exceeded"
+      },
+      "product_ok": false
+    },
+    {
+      "slot": "E6",
+      "n": "20003000180005400081000485",
+      "bits": 85,
+      "degree": 5,
+      "snfs": false,
+      "rep": 1,
+      "exit_code": 1,
+      "elapsed_ms": null,
+      "wall_ms": 122724.6,
+      "factors": [],
+      "method": null,
+      "relations": null,
+      "rank": null,
+      "polynomial": null,
+      "error": {
+        "category": "resource-limit",
+        "detail": "general relation deadline exceeded"
+      },
+      "product_ok": false
+    },
+    {
+      "slot": "E6",
+      "n": "20003000180005400081000485",
+      "bits": 85,
+      "degree": 5,
+      "snfs": false,
+      "rep": 2,
+      "exit_code": 1,
+      "elapsed_ms": null,
+      "wall_ms": 121870.4,
+      "factors": [],
+      "method": null,
+      "relations": null,
+      "rank": null,
+      "polynomial": null,
+      "error": {
+        "category": "resource-limit",
+        "detail": "general relation deadline exceeded"
+      },
+      "product_ok": false
+    },
+    {
+      "slot": "E6",
+      "n": "20003000180005400081000485",
+      "bits": 85,
+      "degree": 5,
+      "snfs": false,
+      "rep": 3,
+      "exit_code": 1,
+      "elapsed_ms": null,
+      "wall_ms": 121567.5,
+      "factors": [],
+      "method": null,
+      "relations": null,
+      "rank": null,
+      "polynomial": null,
+      "error": {
+        "category": "resource-limit",
+        "detail": "general relation deadline exceeded"
+      },
+      "product_ok": false
+    },
+    {
+      "slot": "E7",
+      "n": "93750000000000000000000000001",
+      "bits": 97,
+      "degree": 5,
+      "snfs": true,
+      "rep": 1,
+      "exit_code": 1,
+      "elapsed_ms": null,
+      "wall_ms": 121610.6,
+      "factors": [],
+      "method": null,
+      "relations": null,
+      "rank": null,
+      "polynomial": null,
+      "error": {
+        "category": "resource-limit",
+        "detail": "general relation deadline exceeded"
+      },
+      "product_ok": false
+    },
+    {
+      "slot": "E7",
+      "n": "93750000000000000000000000001",
+      "bits": 97,
+      "degree": 5,
+      "snfs": true,
+      "rep": 2,
+      "exit_code": 1,
+      "elapsed_ms": null,
+      "wall_ms": 121656.2,
+      "factors": [],
+      "method": null,
+      "relations": null,
+      "rank": null,
+      "polynomial": null,
+      "error": {
+        "category": "resource-limit",
+        "detail": "general relation deadline exceeded"
+      },
+      "product_ok": false
+    },
+    {
+      "slot": "E7",
+      "n": "93750000000000000000000000001",
+      "bits": 97,
+      "degree": 5,
+      "snfs": true,
+      "rep": 3,
+      "exit_code": 1,
+      "elapsed_ms": null,
+      "wall_ms": 121936.2,
+      "factors": [],
+      "method": null,
+      "relations": null,
+      "rank": null,
+      "polynomial": null,
+      "error": {
+        "category": "resource-limit",
+        "detail": "general relation deadline exceeded"
+      },
+      "product_ok": false
+    },
+    {
+      "slot": "E7",
+      "n": "93750000000000000000000000001",
+      "bits": 97,
+      "degree": 5,
+      "snfs": false,
+      "rep": 1,
+      "exit_code": 1,
+      "elapsed_ms": null,
+      "wall_ms": 121773.0,
+      "factors": [],
+      "method": null,
+      "relations": null,
+      "rank": null,
+      "polynomial": null,
+      "error": {
+        "category": "resource-limit",
+        "detail": "general relation deadline exceeded"
+      },
+      "product_ok": false
+    },
+    {
+      "slot": "E7",
+      "n": "93750000000000000000000000001",
+      "bits": 97,
+      "degree": 5,
+      "snfs": false,
+      "rep": 2,
+      "exit_code": 1,
+      "elapsed_ms": null,
+      "wall_ms": 121336.6,
+      "factors": [],
+      "method": null,
+      "relations": null,
+      "rank": null,
+      "polynomial": null,
+      "error": {
+        "category": "resource-limit",
+        "detail": "general relation deadline exceeded"
+      },
+      "product_ok": false
+    },
+    {
+      "slot": "E7",
+      "n": "93750000000000000000000000001",
+      "bits": 97,
+      "degree": 5,
+      "snfs": false,
+      "rep": 3,
+      "exit_code": 1,
+      "elapsed_ms": null,
+      "wall_ms": 121482.9,
+      "factors": [],
+      "method": null,
+      "relations": null,
+      "rank": null,
+      "polynomial": null,
+      "error": {
+        "category": "resource-limit",
+        "detail": "general relation deadline exceeded"
+      },
+      "product_ok": false
+    },
+    {
+      "slot": "E8",
+      "n": "3280500000000000000000001",
+      "bits": 82,
+      "degree": 4,
+      "snfs": true,
+      "rep": 1,
+      "exit_code": 1,
+      "elapsed_ms": null,
+      "wall_ms": 121464.8,
+      "factors": [],
+      "method": null,
+      "relations": null,
+      "rank": null,
+      "polynomial": null,
+      "error": {
+        "category": "resource-limit",
+        "detail": "general relation deadline exceeded"
+      },
+      "product_ok": false
+    },
+    {
+      "slot": "E8",
+      "n": "3280500000000000000000001",
+      "bits": 82,
+      "degree": 4,
+      "snfs": true,
+      "rep": 2,
+      "exit_code": 1,
+      "elapsed_ms": null,
+      "wall_ms": 121510.9,
+      "factors": [],
+      "method": null,
+      "relations": null,
+      "rank": null,
+      "polynomial": null,
+      "error": {
+        "category": "resource-limit",
+        "detail": "general relation deadline exceeded"
+      },
+      "product_ok": false
+    },
+    {
+      "slot": "E8",
+      "n": "3280500000000000000000001",
+      "bits": 82,
+      "degree": 4,
+      "snfs": true,
+      "rep": 3,
+      "exit_code": 1,
+      "elapsed_ms": null,
+      "wall_ms": 121545.4,
+      "factors": [],
+      "method": null,
+      "relations": null,
+      "rank": null,
+      "polynomial": null,
+      "error": {
+        "category": "resource-limit",
+        "detail": "general relation deadline exceeded"
+      },
+      "product_ok": false
+    },
+    {
+      "slot": "E8",
+      "n": "3280500000000000000000001",
+      "bits": 82,
+      "degree": 4,
+      "snfs": false,
+      "rep": 1,
+      "exit_code": 1,
+      "elapsed_ms": null,
+      "wall_ms": 121503.7,
+      "factors": [],
+      "method": null,
+      "relations": null,
+      "rank": null,
+      "polynomial": null,
+      "error": {
+        "category": "resource-limit",
+        "detail": "general relation deadline exceeded"
+      },
+      "product_ok": false
+    },
+    {
+      "slot": "E8",
+      "n": "3280500000000000000000001",
+      "bits": 82,
+      "degree": 4,
+      "snfs": false,
+      "rep": 2,
+      "exit_code": 1,
+      "elapsed_ms": null,
+      "wall_ms": 121519.2,
+      "factors": [],
+      "method": null,
+      "relations": null,
+      "rank": null,
+      "polynomial": null,
+      "error": {
+        "category": "resource-limit",
+        "detail": "general relation deadline exceeded"
+      },
+      "product_ok": false
+    },
+    {
+      "slot": "E8",
+      "n": "3280500000000000000000001",
+      "bits": 82,
+      "degree": 4,
+      "snfs": false,
+      "rep": 3,
+      "exit_code": 1,
+      "elapsed_ms": null,
+      "wall_ms": 121467.9,
+      "factors": [],
+      "method": null,
+      "relations": null,
+      "rank": null,
+      "polynomial": null,
+      "error": {
+        "category": "resource-limit",
+        "detail": "general relation deadline exceeded"
+      },
+      "product_ok": false
+    }
+  ],
+  "verdict": "NO-GO",
+  "score": {
+    "snfs_cells": 0,
+    "generic_cells": 1,
+    "voided_cells": 7,
+    "bar": "SNFS wall-clock advantage on a majority of cells with every product verified and method gnfs-family"
+  },
+  "cells": [
+    {
+      "slot": "E1",
+      "n": "1999898001733990175",
+      "bits": 61,
+      "degree": 3,
+      "arms": {
+        "snfs": {
+          "ok": "0/3",
+          "median_wall_ms": 121767.1,
+          "errors": [
+            "general relation deadline exceeded"
+          ],
+          "methods": [],
+          "product_ok_all": true
+        },
+        "generic": {
+          "ok": "3/3",
+          "median_wall_ms": 43929.8,
+          "errors": [
+            "none"
+          ],
+          "methods": [
+            "gnfs+perfect_square+prime"
+          ],
+          "product_ok_all": true
+        }
+      },
+      "cell_verdict": "GENERIC"
+    },
+    {
+      "slot": "E2",
+      "n": "2999811003968972216",
+      "bits": 62,
+      "degree": 3,
+      "arms": {
+        "snfs": {
+          "ok": "0/3",
+          "median_wall_ms": 121705.5,
+          "errors": [
+            "general relation deadline exceeded"
+          ],
+          "methods": [],
+          "product_ok_all": true
+        },
+        "generic": {
+          "ok": "0/3",
+          "median_wall_ms": 121653.5,
+          "errors": [
+            "general relation deadline exceeded"
+          ],
+          "methods": [],
+          "product_ok_all": true
+        }
+      },
+      "cell_verdict": "VOID"
+    },
+    {
+      "slot": "E3",
+      "n": "1600000000000000000001",
+      "bits": 71,
+      "degree": 4,
+      "arms": {
+        "snfs": {
+          "ok": "0/3",
+          "median_wall_ms": 121808.6,
+          "errors": [
+            "general relation deadline exceeded"
+          ],
+          "methods": [],
+          "product_ok_all": true
+        },
+        "generic": {
+          "ok": "0/3",
+          "median_wall_ms": 121976.7,
+          "errors": [
+            "general relation deadline exceeded"
+          ],
+          "methods": [],
+          "product_ok_all": true
+        }
+      },
+      "cell_verdict": "VOID"
+    },
+    {
+      "slot": "E4",
+      "n": "4800288006480064800242",
+      "bits": 73,
+      "degree": 4,
+      "arms": {
+        "snfs": {
+          "ok": "0/3",
+          "median_wall_ms": 121816.4,
+          "errors": [
+            "general relation deadline exceeded"
+          ],
+          "methods": [],
+          "product_ok_all": true
+        },
+        "generic": {
+          "ok": "0/3",
+          "median_wall_ms": 71818.7,
+          "errors": [
+            "relation collection exceeded the memory budget of 1024 MiB (live estimate 1025 MiB)"
+          ],
+          "methods": [],
+          "product_ok_all": true
+        }
+      },
+      "cell_verdict": "VOID"
+    },
+    {
+      "slot": "E5",
+      "n": "20000000000000000000000001",
+      "bits": 85,
+      "degree": 5,
+      "arms": {
+        "snfs": {
+          "ok": "0/3",
+          "median_wall_ms": 121544.2,
+          "errors": [
+            "general relation deadline exceeded"
+          ],
+          "methods": [],
+          "product_ok_all": true
+        },
+        "generic": {
+          "ok": "0/3",
+          "median_wall_ms": 121498.3,
+          "errors": [
+            "general relation deadline exceeded"
+          ],
+          "methods": [],
+          "product_ok_all": true
+        }
+      },
+      "cell_verdict": "VOID"
+    },
+    {
+      "slot": "E6",
+      "n": "20003000180005400081000485",
+      "bits": 85,
+      "degree": 5,
+      "arms": {
+        "snfs": {
+          "ok": "0/3",
+          "median_wall_ms": 122142.0,
+          "errors": [
+            "general relation deadline exceeded"
+          ],
+          "methods": [],
+          "product_ok_all": true
+        },
+        "generic": {
+          "ok": "0/3",
+          "median_wall_ms": 121870.4,
+          "errors": [
+            "general relation deadline exceeded"
+          ],
+          "methods": [],
+          "product_ok_all": true
+        }
+      },
+      "cell_verdict": "VOID"
+    },
+    {
+      "slot": "E7",
+      "n": "93750000000000000000000000001",
+      "bits": 97,
+      "degree": 5,
+      "arms": {
+        "snfs": {
+          "ok": "0/3",
+          "median_wall_ms": 121656.2,
+          "errors": [
+            "general relation deadline exceeded"
+          ],
+          "methods": [],
+          "product_ok_all": true
+        },
+        "generic": {
+          "ok": "0/3",
+          "median_wall_ms": 121482.9,
+          "errors": [
+            "general relation deadline exceeded"
+          ],
+          "methods": [],
+          "product_ok_all": true
+        }
+      },
+      "cell_verdict": "VOID"
+    },
+    {
+      "slot": "E8",
+      "n": "3280500000000000000000001",
+      "bits": 82,
+      "degree": 4,
+      "arms": {
+        "snfs": {
+          "ok": "0/3",
+          "median_wall_ms": 121510.9,
+          "errors": [
+            "general relation deadline exceeded"
+          ],
+          "methods": [],
+          "product_ok_all": true
+        },
+        "generic": {
+          "ok": "0/3",
+          "median_wall_ms": 121503.7,
+          "errors": [
+            "general relation deadline exceeded"
+          ],
+          "methods": [],
+          "product_ok_all": true
+        }
+      },
+      "cell_verdict": "VOID"
+    }
+  ]
+}
