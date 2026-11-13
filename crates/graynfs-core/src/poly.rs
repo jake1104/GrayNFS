@@ -123,8 +123,13 @@ impl ModPolynomial {
                 * u128::from(inverse))
                 % modulus;
             quotient[shift] = scale as u64;
-            for index in 0..=divisor_degree {
-                let product = (u128::from(divisor.coefficients[index]) * scale) % modulus;
+            for (index, coefficient) in divisor
+                .coefficients
+                .iter()
+                .enumerate()
+                .take(divisor_degree + 1)
+            {
+                let product = (u128::from(*coefficient) * scale) % modulus;
                 let target = shift + index;
                 remainder.coefficients[target] =
                     ((u128::from(remainder.coefficients[target]) + modulus - product) % modulus)

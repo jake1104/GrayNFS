@@ -43,9 +43,9 @@ impl PolynomialForm {
             })
             .collect();
         for index in degree..span {
-            for offset in 0..degree {
+            for (offset, coefficient) in field.polynomial.iter().enumerate().take(degree) {
                 let target = index - degree + offset;
-                let factor = -field.polynomial[offset].clone();
+                let factor = -coefficient.clone();
                 if target < degree {
                     reduction[index][target] += &factor;
                 } else {
