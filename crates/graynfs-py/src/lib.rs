@@ -315,8 +315,9 @@ fn is_prime_proof_decimal(py: Python<'_>, n: &str, method: &str) -> PyResult<boo
                 &options_frobenius,
             ))
         }
+        "ecpp" => Ok(graynfs_core::ecpp::is_prime_ecpp_proof(&value)),
         _ => Err(PyValueError::new_err(format!(
-            "input: unknown proof method: {method} (expected one of aks|bpsw|frobenius|bpsw_frobenius); over-64-bit aks False means unproven, not composite"
+            "input: unknown proof method: {method} (expected one of aks|bpsw|frobenius|bpsw_frobenius|ecpp); over-64-bit aks False means unproven, not composite; ecpp proves u64 directly and 65-to-128-bit via certificate, False outside means unproven"
         ))),
     })
 }

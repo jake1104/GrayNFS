@@ -32,8 +32,8 @@ pub use checkpoint::{
     CHECKPOINT_VERSION, CheckpointPayload, load_gnfs_checkpoint, save_gnfs_checkpoint,
 };
 pub use ecpp::{
-    EcppCertificate, EcppLevel, certificate_to_json, prove_ecpp, verify_ecpp_certificate,
-    verify_ecpp_json,
+    EcppCertificate, EcppLevel, certificate_to_json, is_prime_ecpp_proof, prove_ecpp,
+    verify_ecpp_certificate, verify_ecpp_json,
 };
 pub use error::FactorError;
 pub use factor::{

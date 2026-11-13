@@ -212,9 +212,9 @@ def is_probable_prime_fast(n: int, rounds: int = 64) -> bool:
 
 
 def is_prime_proof(n: int, method: str = "aks") -> bool:
-    """Route n across aks|bpsw|frobenius|bpsw_frobenius; only aks proves, and only at 64 bits or below.
+    """Route n across aks|bpsw|frobenius|bpsw_frobenius|ecpp; aks proves up to 64 bits, ecpp proves u64 plus 65-to-128-bit via certificate.
 
-    aks is a proof up to 64 bits: True means proven prime and False means composite. Above 64 bits aks always answers False, which means unproven rather than composite, so pair it with is_probable_prime to tell the two apart (True means an unproven prime, False means composite). bpsw, frobenius, and bpsw_frobenius are probable-only at every size, so their True means probable prime and their False means composite. Unknown methods raise GrayNFSError with category input naming the four valid methods."""
+    aks is a proof up to 64 bits: True means proven prime and False means composite. Above 64 bits aks always answers False, which means unproven rather than composite, so pair it with is_probable_prime to tell the two apart (True means an unproven prime, False means composite). bpsw, frobenius, and bpsw_frobenius are probable-only at every size, so their True means probable prime and their False means composite. ecpp is a proof for u64 inputs (deterministic gate) and 65-to-128-bit inputs (certificate produce plus verify): True means proven prime, False means unproven-or-composite, so pair it with is_probable_prime the same way as aks. Unknown methods raise GrayNFSError with category input naming the five valid methods."""
     try:
         if isinstance(n, bool) or not isinstance(n, int):
             raise TypeError("n must be an integer")

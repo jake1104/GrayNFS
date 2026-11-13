@@ -967,6 +967,16 @@ fn prove_from(current: &BigInt, levels: &mut Vec<EcppLevel>, depth: u32, top: bo
     false
 }
 
+pub fn is_prime_ecpp_proof(value: &BigInt) -> bool {
+    if let Some(small) = value.to_u64() {
+        return is_prime_u64(small);
+    }
+    match prove_ecpp(value) {
+        Some(cert) => verify_ecpp_certificate(&cert),
+        None => false,
+    }
+}
+
 pub fn prove_ecpp(value: &BigInt) -> Option<EcppCertificate> {
     if value < &BigInt::from(2) {
         return None;
