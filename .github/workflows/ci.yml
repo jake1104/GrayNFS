@@ -100,7 +100,10 @@ jobs:
       - uses: actions/setup-node@v4
         with:
           node-version: "22"
-      - uses: jetli/wasm-pack-action@v2
+      - uses: taiki-e/install-action@v2
+        with:
+          tool: wasm-pack
+          fallback: cargo-install
       - name: wasm-check
         run: cargo check -p graynfs-core --target wasm32-unknown-unknown
       - name: wasm-pack-build
