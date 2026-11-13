@@ -1,4 +1,4 @@
-# GrayNFS · ![Version](https://img.shields.io/badge/version-v0.2.5-blue.svg) [![License: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE.md) [![CI](https://github.com/jake1104/GrayNFS/actions/workflows/ci.yml/badge.svg)](https://github.com/jake1104/GrayNFS/actions/workflows/ci.yml) [![Python](https://img.shields.io/badge/python-3.8%2B-blue.svg)](python/graynfs/__init__.py)
+# GrayNFS · ![Version](https://img.shields.io/badge/version-v0.2.6-blue.svg) [![License: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE.md) [![CI](https://github.com/jake1104/GrayNFS/actions/workflows/ci.yml/badge.svg)](https://github.com/jake1104/GrayNFS/actions/workflows/ci.yml) [![Python](https://img.shields.io/badge/python-3.8%2B-blue.svg)](python/graynfs/__init__.py)
 
 Integer-factorization engine with SIQS (degree 2) and GNFS (degrees 3-5), plus trial division, Fermat, p-1/p+1, ECM front stages; the fastest verified answer wins.
 
@@ -52,7 +52,7 @@ Prerequisites: a Rust stable toolchain plus a C compiler (the default allocator 
 cargo build -p graynfs-cli --release
 .\target\release\graynfs.exe 1000036000099
 python -m maturin build --release --out dist
-python -m pip install --force-reinstall --no-deps dist\graynfs-0.2.5-cp38-abi3-win_amd64.whl
+python -m pip install --force-reinstall --no-deps dist\graynfs-0.2.6-cp38-abi3-win_amd64.whl
 ```
 
 ## CLI usage
@@ -192,11 +192,11 @@ graynfs.factor(100160063, degree=3)             # [10007, 10009]
 graynfs.factor_report(100160063)["factors"]     # [10007, 10009]
 graynfs.factor_report(100160063)["method"]      # 'fermat'
 graynfs.is_probable_prime(10007)                # True
-graynfs.version()                               # '0.2.5'
+graynfs.version()                               # '0.2.6'
 graynfs.stage_timings(100160063, degree=3)      # [{'stage': 'fermat', ...}]
 ```
 
-All outputs above were verified live against the installed 0.2.5 wheel.
+All outputs above were verified live against the installed 0.2.6 wheel.
 
 ### Python keywords at a glance
 
@@ -505,7 +505,7 @@ Release, wheel, and Python suite:
 ```powershell
 cargo build -p graynfs-cli --release
 python -m maturin build --release --out dist
-python -m pip install --force-reinstall --no-deps dist\graynfs-0.2.5-cp38-abi3-win_amd64.whl
+python -m pip install --force-reinstall --no-deps dist\graynfs-0.2.6-cp38-abi3-win_amd64.whl
 python -m pytest -q python/tests
 ```
 
