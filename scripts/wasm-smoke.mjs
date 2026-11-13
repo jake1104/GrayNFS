@@ -41,7 +41,7 @@ const CASES = [
     name: "hostile105-budget",
     input: "35658606617546370626847644936101",
     budgetMs: 1000,
-    expectFailure: "resource limit exceeded",
+    expectedFactors: ["4373243081080303", "8153813075658667"],
   },
 ];
 
